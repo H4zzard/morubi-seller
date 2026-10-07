@@ -1,0 +1,21 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: morubi
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_USER: postgres
+      MORUBI_APP_PASSWORD: morubi_app
+    ports:
+      - '5432:5432'
+    volumes:
+      - morubi-postgres:/var/lib/postgresql/data
+      - ./packages/db/docker/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres -d morubi']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  morubi-postgres:

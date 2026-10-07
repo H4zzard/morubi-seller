@@ -1,0 +1,49 @@
+{
+  "name": "morubi",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@12.9.1",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "build": "turbo run build",
+    "build:api": "pnpm --filter @morubi/api... build",
+    "build:desktop": "pnpm --filter @morubi/desktop... build",
+    "build:packages": "pnpm --filter \"./packages/**\" -r build",
+    "build:web": "pnpm --filter @morubi/web... build",
+    "dev": "pnpm build:packages && turbo run dev --parallel",
+    "dev:api": "pnpm build:packages && pnpm --filter @morubi/api dev",
+    "dev:desktop": "pnpm build:packages && pnpm --filter @morubi/desktop dev",
+    "dev:worker": "pnpm build:packages && pnpm --filter @morubi/worker dev",
+    "dev:web": "pnpm build:packages && pnpm --filter @morubi/web dev",
+    "db:generate": "pnpm --filter @morubi/db db:generate",
+    "db:migrate": "pnpm --filter @morubi/db db:migrate",
+    "db:seed": "pnpm --filter @morubi/db db:seed",
+    "db:studio": "pnpm --filter @morubi/db db:studio",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "lint": "turbo run lint",
+    "test": "turbo run test",
+    "test:connectors": "pnpm --filter @morubi/integrations test:contract",
+    "test:intelligence": "pnpm --filter @morubi/intelligence test:evaluation",
+    "test:generative": "pnpm --filter @morubi/ai test:evaluation",
+    "test:audio": "pnpm --filter @morubi/storage --filter @morubi/ai --filter @morubi/db test:audio",
+    "test:live-calls": "pnpm --filter @morubi/live-calls test",
+    "test:live-load": "pnpm --filter @morubi/live-calls test:load",
+    "test:integration": "pnpm build:packages && pnpm --filter @morubi/api test:integration",
+    "typecheck": "turbo run typecheck"
+  },
+  "devDependencies": {
+    "@eslint/js": "9.39.1",
+    "@types/node": "24.10.1",
+    "eslint": "9.39.1",
+    "eslint-plugin-react-hooks": "7.0.1",
+    "eslint-plugin-react-refresh": "0.4.24",
+    "globals": "16.5.0",
+    "prettier": "3.9.9",
+    "turbo": "2.11.7",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.71.1"
+  }
+}

@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: morubi
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d morubi"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_ADMIN_URL: postgresql://postgres:postgres@localhost:5432/morubi
+      DATABASE_URL: postgresql://morubi_app:morubi_app@localhost:5432/morubi
+      TEST_DATABASE_ADMIN_URL: postgresql://postgres:postgres@localhost:5432/morubi
+      TEST_DATABASE_URL: postgresql://morubi_app:morubi_app@localhost:5432/morubi
+      BETTER_AUTH_SECRET: ci-secret-with-at-least-thirty-two-characters
+      BETTER_AUTH_URL: http://localhost:4000
+      WEB_ORIGIN: http://localhost:3000
+      DESKTOP_DEV_ORIGIN: http://localhost:5173
+      NEXT_PUBLIC_API_URL: http://localhost:4000
+      MORUBI_API_URL: http://localhost:4000
+      LOG_LEVEL: silent
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.9.1
+          run_install: false
+      - run: pnpm install --frozen-lockfile
+      - name: Create restricted runtime role
+        env:
+          PGPASSWORD: postgres
+        run: psql -h localhost -U postgres -d morubi -f packages/db/docker/init/001_roles.sql
+      - run: pnpm db:migrate
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm test
+      - name: CRM connector contract suite
+        run: pnpm test:connectors
+      - name: Generative evaluation corpus
+        run: pnpm test:generative
+      - run: pnpm test:integration
+      - run: pnpm build:web
+      - run: pnpm build:api
+      - run: pnpm build:desktop
+      - name: Install Chromium for web E2E
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Web foundation E2E
+        run: pnpm --filter @morubi/web test:e2e
+      - name: Electron smoke
+        run: xvfb-run -a pnpm --filter @morubi/desktop test:e2e

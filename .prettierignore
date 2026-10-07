@@ -1,0 +1,12 @@
+node_modules
+.next
+dist
+out
+coverage
+pnpm-lock.yaml
+packages/db/drizzle
+apps/desktop/test-results
+apps/desktop/playwright-report
+apps/web/test-results
+apps/web/playwright-report
+**/next-env.d.ts

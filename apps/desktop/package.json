@@ -1,0 +1,81 @@
+{
+  "name": "@morubi/desktop",
+  "version": "0.1.0",
+  "description": "Aplicativo desktop seguro e desktop-first do Morubi",
+  "author": "Morubi",
+  "private": true,
+  "type": "module",
+  "main": "./out/main/index.js",
+  "scripts": {
+    "build": "electron-vite build && electron-builder --dir",
+    "build:app": "electron-vite build",
+    "dev": "electron-vite dev",
+    "lint": "eslint src e2e electron.vite.config.ts playwright.config.ts",
+    "preview": "electron-vite preview",
+    "test": "vitest run src",
+    "test:e2e": "playwright test",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "@morubi/contracts": "workspace:*",
+    "@morubi/config": "workspace:*",
+    "@morubi/live-calls": "workspace:*",
+    "@morubi/permissions": "workspace:*",
+    "@morubi/ui": "workspace:*",
+    "@morubi/validation": "workspace:*",
+    "lucide-react": "1.52.0",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "@playwright/test": "1.63.0",
+    "@tailwindcss/vite": "4.3.3",
+    "@types/node": "24.10.1",
+    "@types/react": "19.2.14",
+    "@types/react-dom": "19.2.3",
+    "@vitejs/plugin-react": "5.2.0",
+    "electron": "44.5.1",
+    "electron-builder": "26.15.3",
+    "electron-vite": "5.0.0",
+    "tailwindcss": "4.3.3",
+    "typescript": "5.9.3",
+    "vite": "7.3.6",
+    "vitest": "5.0.3"
+  },
+  "build": {
+    "appId": "com.morubi.desktop",
+    "productName": "Morubi",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "out/**/*",
+      "package.json"
+    ],
+    "asar": true,
+    "protocols": [
+      {
+        "name": "Morubi",
+        "schemes": [
+          "morubi"
+        ]
+      }
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    },
+    "mac": {
+      "target": [
+        "dmg"
+      ],
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "O Morubi usa o microfone somente após sua confirmação para produzir transcrição e orientações durante uma call."
+      }
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ]
+    }
+  }
+}

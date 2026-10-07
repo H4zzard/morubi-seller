@@ -1,0 +1,27 @@
+{
+  "name": "@morubi/worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "dev": "tsx watch src/index.ts",
+    "lint": "eslint src",
+    "start": "node dist/index.js",
+    "test": "vitest run src",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@morubi/ai": "workspace:*",
+    "@morubi/config": "workspace:*",
+    "@morubi/db": "workspace:*",
+    "@morubi/intelligence": "workspace:*",
+    "@morubi/storage": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "24.10.1",
+    "dotenv": "18.0.5",
+    "tsx": "4.23.15",
+    "vitest": "5.0.3"
+  }
+}

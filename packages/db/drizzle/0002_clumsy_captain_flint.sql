@@ -1,0 +1,1 @@
+ALTER TABLE "source_records" ADD COLUMN "sync_job_id" uuid;
