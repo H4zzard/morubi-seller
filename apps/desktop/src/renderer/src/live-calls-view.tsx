@@ -13,6 +13,7 @@ import {
 import { useEffect, useMemo, useState } from 'react';
 import type {
   ConversationSummaryDto,
+  CallReportDto,
   InterventionCardDto,
   LiveCallDetailDto,
   MeetingProvider,
@@ -68,6 +69,7 @@ export function LiveCallsView() {
   const [now, setNow] = useState(Date.now());
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [report, setReport] = useState<CallReportDto | null>(null);
 
   async function refresh(): Promise<void> {
     const current = await window.morubi.liveCalls.getCurrent();
@@ -105,6 +107,14 @@ export function LiveCallsView() {
         .catch(() => setError('Conexão instável. Tentando reconectar…'));
     }, 10_000);
     return () => window.clearInterval(heartbeat);
+  }, [session?.id, session?.status]);
+
+  useEffect(() => {
+    if (session?.status !== 'ENDED') return;
+    void window.morubi.liveCalls
+      .getReport(session.id)
+      .then(setReport)
+      .catch(() => setReport(null));
   }, [session?.id, session?.status]);
 
   useEffect(() => {
@@ -293,12 +303,74 @@ export function LiveCallsView() {
   }
 
   if (session.status === 'ENDED') {
+    const content = report?.currentRevision?.content;
     return (
       <section className="live-calls live-ended">
         <CircleStop size={32} />
         <span className="morubi-eyebrow">Call finalizada</span>
         <h1>{durationLabel(session.startedAt, session.endedAt, now)}</h1>
         <p>{session.turns.filter((turn) => turn.isFinal).length} eventos de fala processados.</p>
+        <div className="live-report-status" data-status={report?.status ?? 'PROCESSING'}>
+          {report?.status === 'READY'
+            ? 'Relatório pronto'
+            : report?.status === 'FAILED'
+              ? 'Falha ao gerar relatório'
+              : 'Analisando call…'}
+        </div>
+        {content ? (
+          <div className="live-report-grid">
+            <article>
+              <h2>Resumo executivo</h2>
+              <p>{content.executiveSummary.value}</p>
+            </article>
+            <article>
+              <h2>Dores e necessidades</h2>
+              <ul>
+                {[...content.pains, ...content.needs].map((item) => (
+                  <li key={item.value}>{item.value}</li>
+                ))}
+              </ul>
+            </article>
+            <article>
+              <h2>Objeções e riscos</h2>
+              <ul>
+                {[...content.objections, ...content.risks].map((item) => (
+                  <li key={item.value}>{item.value}</li>
+                ))}
+              </ul>
+            </article>
+            <article>
+              <h2>Próximos passos explícitos</h2>
+              <ul>
+                {content.explicitNextSteps.map((item) => (
+                  <li key={item.value}>{item.value}</li>
+                ))}
+              </ul>
+            </article>
+            <article>
+              <h2>Sugestões do Morubi</h2>
+              <ul>
+                {content.suggestedNextSteps.map((item) => (
+                  <li key={item.value}>{item.value}</li>
+                ))}
+              </ul>
+            </article>
+            <article>
+              <h2>Avaliação</h2>
+              <p>
+                {content.assessment.outcome} · {Math.round(content.assessment.confidence * 100)}%
+              </p>
+            </article>
+          </div>
+        ) : null}
+        {report?.status === 'FAILED' ? (
+          <Button
+            variant="secondary"
+            onClick={() => void window.morubi.liveCalls.retryReport(session.id).then(setReport)}
+          >
+            Tentar novamente
+          </Button>
+        ) : null}
         <Button variant="secondary" onClick={() => setSession(null)}>
           Voltar para Calls
         </Button>

@@ -21,6 +21,7 @@ import {
   commercialEvents,
   createDatabase,
   dealStateRevisions,
+  dealStates,
   generationJobs,
   generativeExecutions,
   intelligenceSettings,
@@ -41,11 +42,11 @@ import {
   type DecisionProvider
 } from '@morubi/intelligence';
 import { user } from '@morubi/db/schema';
+import { getTestDatabaseEnvironment } from './test-database-env.js';
 
-const adminUrl = process.env.TEST_DATABASE_ADMIN_URL;
-const runtimeUrl = process.env.TEST_DATABASE_URL;
+const { adminUrl, runtimeUrl } = getTestDatabaseEnvironment();
 
-describe.skipIf(!adminUrl || !runtimeUrl)('intelligence engine PostgreSQL flow', () => {
+describe('intelligence engine PostgreSQL flow', () => {
   const userAId = `intelligence-a-${randomUUID()}`;
   const userBId = `intelligence-b-${randomUUID()}`;
   const userCId = `intelligence-c-${randomUUID()}`;
@@ -80,8 +81,8 @@ describe.skipIf(!adminUrl || !runtimeUrl)('intelligence engine PostgreSQL flow',
   };
 
   beforeAll(async () => {
-    admin = createDatabase(adminUrl!);
-    runtime = createDatabase(runtimeUrl!);
+    admin = createDatabase(adminUrl);
+    runtime = createDatabase(runtimeUrl);
     await admin.db.insert(user).values([
       { id: userAId, name: 'Intelligence A', email: `${userAId}@example.test` },
       { id: userBId, name: 'Intelligence B', email: `${userBId}@example.test` },
@@ -437,7 +438,7 @@ describe.skipIf(!adminUrl || !runtimeUrl)('intelligence engine PostgreSQL flow',
         durationMs: 1_000,
         speakerType: 'LEAD',
         occurredAt,
-        data: syntheticWavFixture('Gostei, mas achei o valor muito alto.'),
+        data: syntheticWavFixture('Gostei, mas achei o preço muito alto.'),
         correlationId: 'audio-integration'
       });
       const jobs = new TranscriptionJobRepository(runtime.db, contextA);
@@ -464,7 +465,7 @@ describe.skipIf(!adminUrl || !runtimeUrl)('intelligence engine PostgreSQL flow',
         .select()
         .from(commercialEvents)
         .where(eq(commercialEvents.id, transcription.eventId!));
-      expect(transcript?.text).toBe('Gostei, mas achei o valor muito alto.');
+      expect(transcript?.text).toBe('Gostei, mas achei o preço muito alto.');
       expect(event).toMatchObject({
         occurredAt,
         contentOrigin: 'AUDIO_TRANSCRIPT',
@@ -479,6 +480,15 @@ describe.skipIf(!adminUrl || !runtimeUrl)('intelligence engine PostgreSQL flow',
           policy: { ...defaultPolicyConfig, shadowMode: false, interventionsVisible: true }
         }
       ).processEvent(event!.id);
+      const [audioCandidate] = await admin.db
+        .select()
+        .from(interventionCandidates)
+        .where(eq(interventionCandidates.aiDecisionId, decision.decisionId));
+      expect(audioCandidate).toMatchObject({
+        outcome: 'MATCHED',
+        policyResult: 'ALLOW',
+        shadowMode: false
+      });
       const delivery = await new CopilotRepository(runtime.db, contextA).deliverDecision(
         decision.decisionId,
         'audio-integration',
@@ -490,7 +500,8 @@ describe.skipIf(!adminUrl || !runtimeUrl)('intelligence engine PostgreSQL flow',
           feedbackEnabled: false
         }
       );
-      expect(delivery.delivery?.category).toBe('OBJECTION');
+      expect(delivery.delivery, JSON.stringify(delivery)).not.toBeNull();
+      expect(delivery.delivery?.category).toBe('RISK');
       expect(
         await new AudioAssetService(runtime.db, contextB, storage, {
           maxBytes: 1_000_000,
@@ -506,15 +517,21 @@ describe.skipIf(!adminUrl || !runtimeUrl)('intelligence engine PostgreSQL flow',
 
   it('preserves contradictory memory and advances state revision', async () => {
     const service = new CommercialIngestionService(runtime.db, contextA);
+    const [stateBefore] = await admin.db
+      .select({ version: dealStates.version })
+      .from(dealStates)
+      .where(
+        and(eq(dealStates.organizationId, organizationAId), eq(dealStates.dealId, dealAId))
+      );
     const event = await service.ingestCommercialEvent(
-      source('event-budget-8000', '2026-10-06T13:00:00Z'),
+      source('event-budget-8000', '2026-10-07T11:00:00Z'),
       {
         dealId: dealAId,
         actorType: 'LEAD',
         source: 'OTHER',
         type: 'MESSAGE',
         text: 'O preço cabe no orçamento de R$ 8.000.',
-        occurredAt: new Date('2026-10-06T13:00:00Z')
+        occurredAt: new Date('2026-10-07T11:00:00Z')
       }
     );
     const result = await new IntelligenceProcessor(
@@ -523,7 +540,7 @@ describe.skipIf(!adminUrl || !runtimeUrl)('intelligence engine PostgreSQL flow',
       new FixtureDecisionProvider(),
       config
     ).processEvent(event.id);
-    expect(result.stateVersion).toBe(2);
+    expect(result.stateVersion, JSON.stringify(result)).toBe((stateBefore?.version ?? 0) + 1);
     const facts = await admin.db
       .select()
       .from(memoryFacts)
@@ -636,7 +653,7 @@ describe.skipIf(!adminUrl || !runtimeUrl)('intelligence engine PostgreSQL flow',
         'intervention_feedback',
         'realtime_events'
       ]) {
-        const result = await client.query(`select id from ${table} where organization_id = $1`, [
+        const result = await client.query(`select 1 from ${table} where organization_id = $1`, [
           organizationAId
         ]);
         expect(result.rowCount).toBe(0);
@@ -671,7 +688,7 @@ describe.skipIf(!adminUrl || !runtimeUrl)('intelligence engine PostgreSQL flow',
       relrowsecurity: boolean;
       relforcerowsecurity: boolean;
     }>(
-      'select relname, relrowsecurity, relforcerowsecurity from pg_class where relname = any($1::text[]) order by relname',
+      "select relname, relrowsecurity, relforcerowsecurity from pg_class where relnamespace = 'public'::regnamespace and relname = any($1::text[]) order by relname",
       [tables]
     );
     expect(result.rows).toHaveLength(tables.length);

@@ -305,3 +305,9 @@ O gate PostgreSQL externo permanece para `0007`, RLS, concorrência/idempotênci
 Entregue: sessão canônica, lifecycle/heartbeat, consentimento, adapters de detecção Meet/Zoom, abstrações de captura e STT realtime, fixture determinística, partial/final, agregação, memória/fases, promoção para `CommercialEvent`, job prioritário no engine existente, cards live/staleness/TTL, área Calls, modo compacto, usage/custo, migration `0008`, RLS, testes unitários/integrados condicionais e carga sintética 10/25/50. Todos os gates ficam desligados.
 
 Limites explícitos: não há provider STT realtime contratado, captura de áudio do sistema, observador real de janelas/processos nem validação do adapter de microfone em máquinas Windows/macOS. PostgreSQL externo continua sendo gate para migration/RLS/E2E. Fase 3B permanece adiada. Próximo passo recomendado é validar a Fase 8 em piloto controlado; a Fase 9 não foi iniciada.
+
+# Estado das fases
+
+- Fase 3B: adiada.
+- Fase 9 — Post-call intelligence: implementada, incluindo fila, relatórios revisionados, evidência, worker, API, realtime, desktop/web, avaliação e observabilidade.
+- Fase 10: não iniciada.

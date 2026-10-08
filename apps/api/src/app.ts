@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import cors from '@fastify/cors';
 import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify';
 import { ZodError } from 'zod';
-import type { MorubiAuth } from '@morubi/auth';
+import type { AuthUserDirectory, MorubiAuth } from '@morubi/auth';
 import { evaluateGenerativeCorpus, exportGenerativeEvaluationCsv } from '@morubi/ai';
 import type { ApiEnv } from '@morubi/config';
 import type { UserDto } from '@morubi/contracts';
@@ -24,6 +24,7 @@ import {
   LiveCallRepository,
   MembershipRepository,
   OrganizationRepository,
+  PostCallReadRepository,
   resolveTenantContext,
   type DatabaseHandle
 } from '@morubi/db';
@@ -52,7 +53,11 @@ import {
   updateMembershipRoleSchema,
   uuidSchema
 } from '@morubi/validation';
-import { registerBetterAuthRoutes, sessionResolverFromAuth } from './better-auth-handler.js';
+import {
+  registerBetterAuthRoutes,
+  sessionResolverFromAuth,
+  trustedAuthOrigins
+} from './better-auth-handler.js';
 import { evaluateFixtureCorpus, exportEvaluationCsv } from '@morubi/intelligence';
 import type { SessionResolver } from './types.js';
 
@@ -60,6 +65,7 @@ export interface AppDependencies {
   database: DatabaseHandle;
   env: ApiEnv;
   auth?: MorubiAuth;
+  authUserDirectory?: AuthUserDirectory;
   sessionResolver?: SessionResolver;
   audioStorage?: ObjectStorage;
 }
@@ -155,7 +161,14 @@ export async function buildApp(dependencies: AppDependencies): Promise<FastifyIn
     methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS']
   });
 
-  if (dependencies.auth) registerBetterAuthRoutes(app, dependencies.auth, env.BETTER_AUTH_URL);
+  if (dependencies.auth) {
+    registerBetterAuthRoutes(
+      app,
+      dependencies.auth,
+      env.BETTER_AUTH_URL,
+      trustedAuthOrigins(env)
+    );
+  }
 
   app.get('/health', () => ({ status: 'ok', service: 'morubi-api' }));
 
@@ -618,7 +631,7 @@ export async function buildApp(dependencies: AppDependencies): Promise<FastifyIn
     const message = await ingestion.ingestMessage(source, {
       conversationId: input.conversationId,
       senderType: 'LEAD',
-      senderDisplayName: conversation.conversation.contactName ?? 'Lead sintÃ©tico',
+      senderDisplayName: conversation.conversation.contactName ?? 'Lead sintético',
       contentType: 'AUDIO',
       occurredAt
     });
@@ -743,9 +756,60 @@ export async function buildApp(dependencies: AppDependencies): Promise<FastifyIn
     requirePermission(context, 'commercial.read');
     if (!env.LIVE_CALLS_ENABLED) throw errors.notFound();
     return new LiveCallRepository(database.db, context, true).end(
-      uuidSchema.parse(request.params.sessionId)
+      uuidSchema.parse(request.params.sessionId),
+      request.id,
+      env.POST_CALL_INTELLIGENCE_ENABLED
     );
   });
+
+  app.get('/v1/call-reports', async (request) => {
+    const { context } = await requireTenant(request, resolver, database);
+    requirePermission(context, 'call.report.read');
+    if (!env.POST_CALL_INTELLIGENCE_ENABLED) throw errors.notFound();
+    return new PostCallReadRepository(database.db, context).list();
+  });
+
+  app.get<{ Params: { sessionId: string } }>(
+    '/v1/live-calls/:sessionId/report',
+    async (request) => {
+      const { context } = await requireTenant(request, resolver, database);
+      requirePermission(context, 'call.report.read');
+      if (!env.POST_CALL_INTELLIGENCE_ENABLED) throw errors.notFound();
+      const report = await new PostCallReadRepository(database.db, context).getReport(
+        uuidSchema.parse(request.params.sessionId)
+      );
+      if (!report) throw errors.notFound();
+      return report;
+    }
+  );
+
+  app.post<{ Params: { sessionId: string } }>(
+    '/v1/live-calls/:sessionId/report/retry',
+    async (request, reply) => {
+      const { context } = await requireTenant(request, resolver, database);
+      requirePermission(context, 'call.report.retry');
+      if (!env.POST_CALL_INTELLIGENCE_ENABLED) throw errors.notFound();
+      const report = await new PostCallReadRepository(database.db, context).retry(
+        uuidSchema.parse(request.params.sessionId),
+        request.id
+      );
+      return reply.status(202).send(report);
+    }
+  );
+
+  app.get<{ Params: { sessionId: string } }>(
+    '/v1/live-calls/:sessionId/transcript',
+    async (request) => {
+      const { context } = await requireTenant(request, resolver, database);
+      requirePermission(context, 'call.report.read');
+      if (!env.POST_CALL_INTELLIGENCE_ENABLED) throw errors.notFound();
+      const transcript = await new PostCallReadRepository(database.db, context).transcript(
+        uuidSchema.parse(request.params.sessionId)
+      );
+      if (!transcript) throw errors.notFound();
+      return transcript;
+    }
+  );
 
   app.get('/v1/dev/live-calls/settings', async (request) => {
     const { context } = await requireTenant(request, resolver, database);
@@ -863,13 +927,22 @@ export async function buildApp(dependencies: AppDependencies): Promise<FastifyIn
       }
       return reply.status(202).send({ session: await live.get(sessionId), results });
     }
-    return live.end(sessionId);
+    return live.end(sessionId, request.id, env.POST_CALL_INTELLIGENCE_ENABLED);
   });
 
   app.get('/v1/memberships', async (request) => {
     const { context } = await requireTenant(request, resolver, database);
     requirePermission(context, 'membership.view');
-    return new MembershipRepository(database.db, context).list();
+    const memberships = await new MembershipRepository(database.db, context).list();
+    if (!dependencies.authUserDirectory) return memberships;
+    const users = await dependencies.authUserDirectory.findByIds(
+      memberships.map((membership) => membership.userId)
+    );
+    const usersById = new Map(users.map((user) => [user.id, user]));
+    return memberships.map((membership) => ({
+      ...membership,
+      user: usersById.get(membership.userId)
+    }));
   });
 
   app.get('/v1/integrations/crm', async (request) => {
@@ -902,8 +975,10 @@ export async function buildApp(dependencies: AppDependencies): Promise<FastifyIn
     requirePermission(context, 'membership.manage');
     const input = createMembershipSchema.parse(request.body);
     try {
-      const membership = await new MembershipRepository(database.db, context).addByEmail(
-        input.email,
+      const targetUser = await dependencies.authUserDirectory?.findByEmail(input.email);
+      if (!targetUser) throw errors.notFound();
+      const membership = await new MembershipRepository(database.db, context).addByUserId(
+        targetUser.id,
         input.role
       );
       return reply.status(201).send(membership);

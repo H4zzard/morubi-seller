@@ -3,12 +3,19 @@ import { parseApiEnv, parseWorkerEnv } from './index.js';
 
 const required = {
   DATABASE_URL: 'postgresql://localhost/morubi',
+  AUTH_DATABASE_URL: 'postgresql://localhost/morubi-auth',
   BETTER_AUTH_SECRET: 'test-secret-with-at-least-thirty-two-characters',
   BETTER_AUTH_URL: 'http://localhost:4000',
   WEB_ORIGIN: 'http://localhost:3000'
 };
 
 describe('intelligence feature flag defaults', () => {
+  it('requires a dedicated Better Auth database connection', () => {
+    const withoutAuthDatabase = { ...required, AUTH_DATABASE_URL: undefined };
+    expect(() => parseApiEnv(withoutAuthDatabase)).toThrow();
+    expect(parseApiEnv(required).AUTH_DATABASE_URL).toBe(required.AUTH_DATABASE_URL);
+  });
+
   it('enables intelligence only in non-production by default', () => {
     expect(parseApiEnv({ ...required, NODE_ENV: 'test' }).INTELLIGENCE_ENABLED).toBe(true);
     expect(parseApiEnv({ ...required, NODE_ENV: 'production' }).INTELLIGENCE_ENABLED).toBe(false);
@@ -32,7 +39,8 @@ describe('intelligence feature flag defaults', () => {
       ZOOM_DETECTION_ENABLED: false,
       LIVE_TRANSCRIPTION_ENABLED: false,
       LIVE_COPILOT_ENABLED: false,
-      LIVE_GENERATION_ENABLED: false
+      LIVE_GENERATION_ENABLED: false,
+      POST_CALL_INTELLIGENCE_ENABLED: false
     });
   });
 

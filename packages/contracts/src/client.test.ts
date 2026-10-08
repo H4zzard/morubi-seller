@@ -25,4 +25,19 @@ describe('ApiClient', () => {
     ).resolves.toEqual({ ok: true });
     expect(fetcher).toHaveBeenCalledOnce();
   });
+
+  it('uses the current global fetch as a bound-safe default', async () => {
+    const fetcher = vi.fn<typeof fetch>(() =>
+      Promise.resolve(Response.json({ authenticated: true }))
+    );
+    vi.stubGlobal('fetch', fetcher);
+
+    const client = new ApiClient({ baseUrl: 'http://localhost:4000' });
+
+    await expect(client.request('/v1/auth/session')).resolves.toEqual({
+      authenticated: true
+    });
+    expect(fetcher).toHaveBeenCalledOnce();
+    vi.unstubAllGlobals();
+  });
 });

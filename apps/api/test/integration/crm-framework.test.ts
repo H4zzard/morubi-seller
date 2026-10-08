@@ -5,6 +5,7 @@ import {
   CRMConnectionLifecycleService,
   CRMConnectionRepository,
   CRMSyncService,
+  auditLogs,
   contacts,
   createDatabase,
   externalEntityIdentities,
@@ -23,11 +24,11 @@ import {
   InMemoryCredentialStore,
   createFixtureCRMData
 } from '@morubi/integrations/testing';
+import { getTestDatabaseEnvironment } from './test-database-env.js';
 
-const adminUrl = process.env.TEST_DATABASE_ADMIN_URL;
-const runtimeUrl = process.env.TEST_DATABASE_URL;
+const { adminUrl, runtimeUrl } = getTestDatabaseEnvironment();
 
-describe.skipIf(!adminUrl || !runtimeUrl)('CRM connector framework', () => {
+describe('CRM connector framework', () => {
   const userAId = `crm-a-${randomUUID()}`;
   const userBId = `crm-b-${randomUUID()}`;
   const organizationAId = randomUUID();
@@ -44,8 +45,8 @@ describe.skipIf(!adminUrl || !runtimeUrl)('CRM connector framework', () => {
 
   beforeAll(async () => {
     registry.register(fixture);
-    admin = createDatabase(adminUrl!);
-    runtime = createDatabase(runtimeUrl!);
+    admin = createDatabase(adminUrl);
+    runtime = createDatabase(runtimeUrl);
     await admin.db.insert(user).values([
       { id: userAId, name: 'CRM A', email: `${userAId}@example.test` },
       { id: userBId, name: 'CRM B', email: `${userBId}@example.test` }
@@ -66,6 +67,9 @@ describe.skipIf(!adminUrl || !runtimeUrl)('CRM connector framework', () => {
   });
 
   afterAll(async () => {
+    await admin.db
+      .delete(auditLogs)
+      .where(inArray(auditLogs.organizationId, [organizationAId, organizationBId]));
     await admin.db
       .delete(organizations)
       .where(inArray(organizations.id, [organizationAId, organizationBId]));
@@ -222,7 +226,7 @@ describe.skipIf(!adminUrl || !runtimeUrl)('CRM connector framework', () => {
       relrowsecurity: boolean;
       relforcerowsecurity: boolean;
     }>(
-      'select relname, relrowsecurity, relforcerowsecurity from pg_class where relname = any($1::text[]) order by relname',
+      "select relname, relrowsecurity, relforcerowsecurity from pg_class where relnamespace = 'public'::regnamespace and relname = any($1::text[]) order by relname",
       [['crm_connections', 'sync_jobs']]
     );
     expect(result.rows).toHaveLength(2);

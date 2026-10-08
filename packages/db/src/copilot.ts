@@ -30,10 +30,8 @@ import {
   interventionFeedback,
   liveCallSessions,
   liveTranscriptTurns,
-  memberships,
   memoryFacts,
-  realtimeEvents,
-  user
+  realtimeEvents
 } from './schema.js';
 import { setTenantContext } from './tenant.js';
 
@@ -630,7 +628,7 @@ export class CopilotRepository {
           contactName: contacts.name,
           companyName: contacts.companyName,
           deal: deals,
-          ownerName: user.name,
+          ownerName: sql<string | null>`null::text`,
           state: dealStates.snapshot
         })
         .from(conversations)
@@ -648,14 +646,6 @@ export class CopilotRepository {
             eq(contacts.id, conversations.primaryContactId)
           )
         )
-        .leftJoin(
-          memberships,
-          and(
-            eq(memberships.organizationId, deals.organizationId),
-            eq(memberships.id, deals.ownerMembershipId)
-          )
-        )
-        .leftJoin(user, eq(user.id, memberships.userId))
         .leftJoin(
           dealStates,
           and(eq(dealStates.organizationId, deals.organizationId), eq(dealStates.dealId, deals.id))

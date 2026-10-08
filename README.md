@@ -40,6 +40,7 @@ O PostgreSQL local cria duas identidades:
 
 - `postgres`: somente migrations/administração;
 - `morubi_app`: runtime sem ownership e sem `BYPASSRLS`.
+- `morubi_auth`: runtime exclusivo do Better Auth, sem privilégios elevados e limitado às quatro tabelas de autenticação.
 
 ## Desenvolvimento
 
@@ -70,7 +71,7 @@ pnpm db:seed
 pnpm db:studio
 ```
 
-`DATABASE_ADMIN_URL` executa migrations. `DATABASE_URL` é usado pela API com o papel restrito. O contexto tenant é aplicado com `set_config(..., true)` dentro de transações, compatível com pooling.
+`DATABASE_ADMIN_URL` executa migrations. `DATABASE_URL` usa `morubi_app` no domínio; `AUTH_DATABASE_URL` usa `morubi_auth` exclusivamente no Better Auth. O contexto tenant é aplicado com `set_config(..., true)` dentro de transações, compatível com pooling.
 
 `db:seed` cria a organização sintética ACME, Marina como seller, Carlos, Fernanda, Projeto X/Y e duas conversas com mensagens. O seed não cria credenciais de login e não deve ser usado como identidade de produção.
 
@@ -95,6 +96,7 @@ Os testes de integração requerem PostgreSQL migrado e:
 ```bash
 TEST_DATABASE_ADMIN_URL=postgresql://postgres:postgres@localhost:5432/morubi
 TEST_DATABASE_URL=postgresql://morubi_app:morubi_app@localhost:5432/morubi
+TEST_AUTH_DATABASE_URL=postgresql://morubi_auth:replace-with-auth-password@localhost:5432/morubi
 ```
 
 Os testes críticos criam Organização A/B e provam isolamento em repository, RLS e API, audit append-only, invariância de owner, identidade externa por tenant, idempotência, provenance, sync inicial/incremental, retry de rate limit, partial replay e RLS forçado. A suíte de intelligence também cobre state/memory deltas, baixa confiança, contradição, override organizacional e um corpus de 55 cenários/110 eventos. O E2E web percorre auth, organização, membership, navegação por role, listas comerciais e a pendência explícita do CRM piloto.

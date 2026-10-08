@@ -66,6 +66,7 @@ CREATE TABLE "live_call_sessions" (
 	CONSTRAINT "live_call_sessions_confidence_check" CHECK ("live_call_sessions"."phase_confidence" between 0 and 1 and "live_call_sessions"."detection_confidence" between 0 and 1)
 );
 --> statement-breakpoint
+CREATE UNIQUE INDEX "live_call_sessions_organization_id_uidx" ON "live_call_sessions" USING btree ("organization_id","id");--> statement-breakpoint
 CREATE TABLE "live_transcript_turns" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"organization_id" uuid NOT NULL,
@@ -133,7 +134,6 @@ CREATE UNIQUE INDEX "call_consent_records_organization_id_uidx" ON "call_consent
 CREATE UNIQUE INDEX "call_consent_records_session_uidx" ON "call_consent_records" USING btree ("organization_id","live_call_session_id");--> statement-breakpoint
 CREATE UNIQUE INDEX "call_usage_organization_id_uidx" ON "call_usage" USING btree ("organization_id","id");--> statement-breakpoint
 CREATE UNIQUE INDEX "call_usage_session_uidx" ON "call_usage" USING btree ("organization_id","live_call_session_id");--> statement-breakpoint
-CREATE UNIQUE INDEX "live_call_sessions_organization_id_uidx" ON "live_call_sessions" USING btree ("organization_id","id");--> statement-breakpoint
 CREATE INDEX "live_call_sessions_seller_status_idx" ON "live_call_sessions" USING btree ("organization_id","seller_membership_id","status","created_at");--> statement-breakpoint
 CREATE UNIQUE INDEX "live_call_sessions_one_active_seller_uidx" ON "live_call_sessions" USING btree ("organization_id","seller_membership_id") WHERE "live_call_sessions"."status" in ('STARTING', 'ACTIVE', 'ENDING');--> statement-breakpoint
 CREATE UNIQUE INDEX "live_transcript_turns_organization_id_uidx" ON "live_transcript_turns" USING btree ("organization_id","id");--> statement-breakpoint

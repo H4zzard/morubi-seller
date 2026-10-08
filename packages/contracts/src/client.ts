@@ -27,25 +27,45 @@ export class ApiClient {
     this.#baseUrl = options.baseUrl.replace(/\/$/, '');
     this.#getOrganizationId = options.getOrganizationId;
     this.#getHeaders = options.getHeaders;
-    this.#fetcher = options.fetcher ?? fetch;
+    this.#fetcher =
+      options.fetcher ??
+      ((input: RequestInfo | URL, init?: RequestInit) =>
+        globalThis.fetch(input, init));
   }
 
-  public async request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  public async request<T>(
+    path: string,
+    init: RequestInit = {}
+  ): Promise<T> {
     const requestId = crypto.randomUUID();
     const organizationId = await this.#getOrganizationId?.();
     const extraHeaders = await this.#getHeaders?.();
+
     const headers = new Headers(extraHeaders);
-    new Headers(init.headers).forEach((value, key) => headers.set(key, value));
+
+    new Headers(init.headers).forEach((value, key) => {
+      headers.set(key, value);
+    });
+
     headers.set('accept', 'application/json');
     headers.set('x-request-id', requestId);
-    if (organizationId) headers.set('x-organization-id', organizationId);
-    if (init.body && !headers.has('content-type')) headers.set('content-type', 'application/json');
 
-    const response = await this.#fetcher(`${this.#baseUrl}${path}`, {
-      ...init,
-      headers,
-      credentials: init.credentials ?? 'include'
-    });
+    if (organizationId) {
+      headers.set('x-organization-id', organizationId);
+    }
+
+    if (init.body && !headers.has('content-type')) {
+      headers.set('content-type', 'application/json');
+    }
+
+    const response = await this.#fetcher(
+      `${this.#baseUrl}${path}`,
+      {
+        ...init,
+        headers,
+        credentials: init.credentials ?? 'include'
+      }
+    );
 
     if (!response.ok) {
       const fallback: ApiErrorBody = {
@@ -55,11 +75,18 @@ export class ApiClient {
           requestId
         }
       };
-      const body = (await response.json().catch(() => fallback)) as ApiErrorBody;
+
+      const body = (await response
+        .json()
+        .catch(() => fallback)) as ApiErrorBody;
+
       throw new ApiClientError(response.status, body);
     }
 
-    if (response.status === 204) return undefined as T;
+    if (response.status === 204) {
+      return undefined as T;
+    }
+
     return (await response.json()) as T;
   }
 }

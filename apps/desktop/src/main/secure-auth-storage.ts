@@ -2,7 +2,7 @@ import { app, safeStorage } from 'electron';
 import { readFile, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-interface StoredAuthState {
+export interface StoredAuthState {
   cookie: string;
   organizationId: string | null;
 }

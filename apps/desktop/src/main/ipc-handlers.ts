@@ -169,6 +169,18 @@ export function registerIpcHandlers(
     assertTrustedSender(event, window);
     return api.endLiveCall(uuidSchema.parse(value));
   });
+  ipcMain.handle(ipcChannels.liveCallsGetReport, async (event, value: unknown) => {
+    assertTrustedSender(event, window);
+    return api.getCallReport(uuidSchema.parse(value));
+  });
+  ipcMain.handle(ipcChannels.liveCallsRetryReport, async (event, value: unknown) => {
+    assertTrustedSender(event, window);
+    return api.retryCallReport(uuidSchema.parse(value));
+  });
+  ipcMain.handle(ipcChannels.liveCallsGetTranscript, async (event, value: unknown) => {
+    assertTrustedSender(event, window);
+    return api.getCallTranscript(uuidSchema.parse(value));
+  });
   ipcMain.handle(ipcChannels.liveCallsSimulate, async (event, value: unknown) => {
     assertTrustedSender(event, window);
     await api.simulateLiveCall(devLiveCallScenarioSchema.parse(value));

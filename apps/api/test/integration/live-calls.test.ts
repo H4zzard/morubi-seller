@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { eq, inArray } from 'drizzle-orm';
+import { FixtureGenerativeProvider } from '@morubi/ai';
 import {
   commercialEvents,
   CopilotRepository,
@@ -11,20 +12,24 @@ import {
   intelligenceJobs,
   intelligenceSettings,
   IntelligenceProcessor,
+  interventionTemplates,
   LiveCallRepository,
   memberships,
   organizations,
+  PostCallJobRepository,
+  PostCallProcessor,
+  PostCallReadRepository,
   resolveTenantContext,
   user,
   type DatabaseHandle
 } from '@morubi/db';
 import type { TenantContext } from '@morubi/domain';
 import { FixtureDecisionProvider, defaultPolicyConfig } from '@morubi/intelligence';
+import { getTestDatabaseEnvironment } from './test-database-env.js';
 
-const adminUrl = process.env.TEST_DATABASE_ADMIN_URL;
-const runtimeUrl = process.env.TEST_DATABASE_URL;
+const { adminUrl, runtimeUrl } = getTestDatabaseEnvironment();
 
-describe.skipIf(!adminUrl || !runtimeUrl)('live calls integration and tenant invariants', () => {
+describe('live calls integration and tenant invariants', () => {
   const userAId = `live-a-${randomUUID()}`;
   const userBId = `live-b-${randomUUID()}`;
   const organizationAId = randomUUID();
@@ -37,8 +42,8 @@ describe.skipIf(!adminUrl || !runtimeUrl)('live calls integration and tenant inv
   let conversationAId: string;
 
   beforeAll(async () => {
-    admin = createDatabase(adminUrl!);
-    runtime = createDatabase(runtimeUrl!);
+    admin = createDatabase(adminUrl);
+    runtime = createDatabase(runtimeUrl);
     await admin.db.insert(user).values([
       { id: userAId, name: 'Live Seller A', email: `${userAId}@example.test` },
       { id: userBId, name: 'Live Seller B', email: `${userBId}@example.test` }
@@ -83,6 +88,19 @@ describe.skipIf(!adminUrl || !runtimeUrl)('live calls integration and tenant inv
       .returning();
     if (!conversation) throw new Error('Live call conversation setup failed');
     conversationAId = conversation.id;
+    await admin.db.insert(interventionTemplates).values({
+      organizationId: organizationAId,
+      code: 'live-handle-price-v1',
+      category: 'OBJECTION',
+      subtype: 'PRICE',
+      strategy: 'HANDLE_PRICE',
+      title: 'Tratar objeção de preço ao vivo',
+      guidance: 'Investigue valor e impacto antes de discutir condições.',
+      suggestedQuestions: ['Qual impacto justificaria o investimento?'],
+      warnings: ['Não oferecer desconto sem aprovação.'],
+      conditions: {},
+      version: 1
+    });
   });
 
   afterAll(async () => {
@@ -135,7 +153,7 @@ describe.skipIf(!adminUrl || !runtimeUrl)('live calls integration and tenant inv
       speakerRole: 'LEAD' as const,
       speakerOrigin: 'fixture',
       speakerConfidence: 1,
-      text: 'Gostei, mas achei o valor muito alto.',
+      text: 'Gostei, mas achei o preço muito alto.',
       startedAt: new Date('2026-10-07T10:00:01Z'),
       endedAt: new Date('2026-10-07T10:00:04Z'),
       confidence: 0.98,
@@ -198,7 +216,7 @@ describe.skipIf(!adminUrl || !runtimeUrl)('live calls integration and tenant inv
       {
         ...turn,
         clientTurnId: 'fixture-turn-2',
-        text: 'Antes de decidir, preciso entender o retorno desse investimento.',
+        text: 'Antes de decidir, o preço ainda está muito alto.',
         startedAt: new Date('2026-10-07T10:00:05Z'),
         endedAt: new Date('2026-10-07T10:00:08Z'),
         sequence: 2,
@@ -233,7 +251,7 @@ describe.skipIf(!adminUrl || !runtimeUrl)('live calls integration and tenant inv
       'live-current-delivery',
       latestDecision.stateVersion
     );
-    expect(delivered.delivery).toMatchObject({
+    expect(delivered.delivery, JSON.stringify(delivered)).toMatchObject({
       liveCallSessionId: session.id,
       liveTranscriptTurnId: newer.turn.id
     });
@@ -243,7 +261,43 @@ describe.skipIf(!adminUrl || !runtimeUrl)('live calls integration and tenant inv
     expect(detail?.consent).toMatchObject({ mode: 'MANUAL_CONFIRMATION' });
     expect(detail?.turns).toHaveLength(2);
 
-    await repository.end(session.id);
+    await repository.end(session.id, 'post-call-integration');
+    const postCallJobs = new PostCallJobRepository(runtime.db, contextA);
+    const postCallJob = await postCallJobs.claimNext();
+    expect(postCallJob).toMatchObject({
+      liveCallSessionId: session.id,
+      status: 'PROCESSING',
+      priority: 10
+    });
+    const postCallProcessor = new PostCallProcessor(
+      runtime.db,
+      contextA,
+      new FixtureGenerativeProvider(),
+      {
+        enabled: true,
+        maxSegmentCharacters: 1_000,
+        maxOutputCharacters: 16_000,
+        pricing: { inputMicrosPerMillionTokens: 0n, outputMicrosPerMillionTokens: 0n }
+      }
+    );
+    const generated = await postCallProcessor.process(postCallJob!);
+    await postCallJobs.complete(postCallJob!.id);
+    expect(generated).toMatchObject({ version: 1, deduplicated: false });
+    const postCallReads = new PostCallReadRepository(runtime.db, contextA);
+    const report = await postCallReads.getReport(session.id);
+    expect(report).toMatchObject({ status: 'READY' });
+    expect(report?.currentRevision?.content.budget).toEqual([]);
+    expect(report?.currentRevision?.content.executiveSummary.evidenceTurnIds).toEqual([
+      final.turn.id
+    ]);
+    expect(await new PostCallReadRepository(runtime.db, contextB).getReport(session.id)).toBeNull();
+    const retrying = await postCallReads.retry(session.id, 'post-call-reprocess');
+    expect(retrying.status).toBe('PROCESSING');
+    const retryJob = await postCallJobs.claimNext();
+    const reprocessed = await postCallProcessor.process(retryJob!);
+    await postCallJobs.complete(retryJob!.id);
+    expect(reprocessed).toMatchObject({ version: 2, deduplicated: false });
+    expect((await postCallReads.getReport(session.id))?.currentRevision?.version).toBe(2);
     await expect(
       repository.acceptTurn(
         session.id,
@@ -258,14 +312,17 @@ describe.skipIf(!adminUrl || !runtimeUrl)('live calls integration and tenant inv
       'live_call_sessions',
       'call_consent_records',
       'live_transcript_turns',
-      'call_usage'
+      'call_usage',
+      'post_call_jobs',
+      'call_reports',
+      'call_report_revisions'
     ];
     const result = await admin.pool.query<{
       relname: string;
       relrowsecurity: boolean;
       relforcerowsecurity: boolean;
     }>(
-      'select relname, relrowsecurity, relforcerowsecurity from pg_class where relname = any($1::text[]) order by relname',
+      "select relname, relrowsecurity, relforcerowsecurity from pg_class where relnamespace = 'public'::regnamespace and relname = any($1::text[]) order by relname",
       [tableNames]
     );
     expect(result.rows).toHaveLength(tableNames.length);

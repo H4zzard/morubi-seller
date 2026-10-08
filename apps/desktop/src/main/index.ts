@@ -12,6 +12,11 @@ protocol.registerSchemesAsPrivileged([
   { scheme: 'morubi-app', privileges: { standard: true, secure: true, supportFetchAPI: true } }
 ]);
 
+const env = parseDesktopEnv(process.env);
+if (!app.isPackaged && env.MORUBI_USER_DATA_DIR) {
+  app.setPath('userData', env.MORUBI_USER_DATA_DIR);
+}
+
 function registerRendererProtocol(): void {
   const root = resolve(join(__dirname, '../renderer'));
   protocol.handle('morubi-app', (request) => {
@@ -62,7 +67,6 @@ function createWindow(): BrowserWindow {
 
 void app.whenReady().then(() => {
   registerRendererProtocol();
-  const env = parseDesktopEnv(process.env);
   const window = createWindow();
   const microphonePermission = new LiveMediaPermissionGate(env.MORUBI_LIVE_CAPTURE_ENABLED);
   session.defaultSession.setPermissionRequestHandler(
@@ -90,7 +94,14 @@ void app.whenReady().then(() => {
         mediaType: details.mediaType
       })
   );
-  const api = new DesktopApiClient(env.MORUBI_API_URL, new SecureAuthStorage());
+  const desktopOrigin =
+    env.MORUBI_DESKTOP_ORIGIN ??
+    (app.isPackaged ? 'morubi-app://app' : 'http://localhost:5173');
+  const api = new DesktopApiClient(
+    env.MORUBI_API_URL,
+    new SecureAuthStorage(),
+    desktopOrigin
+  );
   const realtime = new DesktopRealtimeClient(window, api);
   registerIpcHandlers(window, api, realtime, async () => {
     if (process.platform === 'darwin') {

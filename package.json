@@ -17,6 +17,7 @@
     "dev:desktop": "pnpm build:packages && pnpm --filter @morubi/desktop dev",
     "dev:worker": "pnpm build:packages && pnpm --filter @morubi/worker dev",
     "dev:web": "pnpm build:packages && pnpm --filter @morubi/web dev",
+    "db:audit": "pnpm --filter @morubi/db db:audit",
     "db:generate": "pnpm --filter @morubi/db db:generate",
     "db:migrate": "pnpm --filter @morubi/db db:migrate",
     "db:seed": "pnpm --filter @morubi/db db:seed",
@@ -31,6 +32,7 @@
     "test:audio": "pnpm --filter @morubi/storage --filter @morubi/ai --filter @morubi/db test:audio",
     "test:live-calls": "pnpm --filter @morubi/live-calls test",
     "test:live-load": "pnpm --filter @morubi/live-calls test:load",
+    "test:post-call": "pnpm --filter @morubi/post-call test:evaluation",
     "test:integration": "pnpm build:packages && pnpm --filter @morubi/api test:integration",
     "typecheck": "turbo run typecheck"
   },

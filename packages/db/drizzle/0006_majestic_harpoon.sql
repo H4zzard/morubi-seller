@@ -20,6 +20,7 @@ CREATE TABLE "generation_jobs" (
 	CONSTRAINT "generation_jobs_attempts_check" CHECK ("generation_jobs"."attempts" >= 0)
 );
 --> statement-breakpoint
+CREATE UNIQUE INDEX "generation_jobs_organization_id_uidx" ON "generation_jobs" USING btree ("organization_id","id");--> statement-breakpoint
 CREATE TABLE "generative_executions" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"organization_id" uuid NOT NULL,
@@ -85,7 +86,6 @@ ALTER TABLE "generative_executions" ADD CONSTRAINT "generative_executions_organi
 ALTER TABLE "generative_executions" ADD CONSTRAINT "generative_executions_organization_event_fk" FOREIGN KEY ("organization_id","commercial_event_id") REFERENCES "public"."commercial_events"("organization_id","id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "generative_executions" ADD CONSTRAINT "generative_executions_organization_seller_fk" FOREIGN KEY ("organization_id","seller_membership_id") REFERENCES "public"."memberships"("organization_id","id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "generative_executions" ADD CONSTRAINT "generative_executions_organization_conversation_fk" FOREIGN KEY ("organization_id","conversation_id") REFERENCES "public"."conversations"("organization_id","id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-CREATE UNIQUE INDEX "generation_jobs_organization_id_uidx" ON "generation_jobs" USING btree ("organization_id","id");--> statement-breakpoint
 CREATE UNIQUE INDEX "generation_jobs_key_uidx" ON "generation_jobs" USING btree ("organization_id","generation_key");--> statement-breakpoint
 CREATE UNIQUE INDEX "generation_jobs_candidate_uidx" ON "generation_jobs" USING btree ("organization_id","candidate_id");--> statement-breakpoint
 CREATE INDEX "generation_jobs_claim_idx" ON "generation_jobs" USING btree ("status","available_at","created_at");--> statement-breakpoint

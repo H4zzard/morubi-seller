@@ -129,6 +129,18 @@ const bridge: MorubiBridge = {
       ipcRenderer.invoke(ipcChannels.liveCallsEnd, sessionId) as ReturnType<
         MorubiBridge['liveCalls']['end']
       >,
+    getReport: (sessionId) =>
+      ipcRenderer.invoke(ipcChannels.liveCallsGetReport, sessionId) as ReturnType<
+        MorubiBridge['liveCalls']['getReport']
+      >,
+    retryReport: (sessionId) =>
+      ipcRenderer.invoke(ipcChannels.liveCallsRetryReport, sessionId) as ReturnType<
+        MorubiBridge['liveCalls']['retryReport']
+      >,
+    getTranscript: (sessionId) =>
+      ipcRenderer.invoke(ipcChannels.liveCallsGetTranscript, sessionId) as ReturnType<
+        MorubiBridge['liveCalls']['getTranscript']
+      >,
     simulate: (input) =>
       ipcRenderer.invoke(ipcChannels.liveCallsSimulate, input) as ReturnType<
         MorubiBridge['liveCalls']['simulate']

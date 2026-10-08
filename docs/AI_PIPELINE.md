@@ -459,3 +459,7 @@ Transcript aprovado retorna ao caminho canônico como `CommercialEvent` textual 
 O realtime possui um contrato de streaming separado do batch da Fase 7. Partial é efêmero; somente turno final idempotente cria `CommercialEvent(contentOrigin=CALL_TRANSCRIPT)`. O evento entra na mesma `intelligence_jobs` com prioridade 100, deadline curta e `source=LIVE_CALL`; não existe um Live Intelligence Engine paralelo.
 
 Cards carregam session/turn IDs, TTL curto e staleness por sequência. Geração live requer gate próprio, além dos gates generativos existentes, e começa desligada. Provider real não foi selecionado; CI e simulator usam fixture. Consulte `LIVE_CALLS.md`.
+
+# Pipeline pós-call
+
+`ENDED → post_call_job → segment extraction → hierarchical reconciliation → Zod/evidence validation → call_report_revision → ai_usage → realtime`. O profile `POST_CALL_ANALYSIS` usa fixture determinística por padrão e DeepSeek somente sob `POST_CALL_PROVIDER=deepseek`, `DEEPSEEK_ENABLED=true` e credencial configurada. Não há egress de rede nos testes.

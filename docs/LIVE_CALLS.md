@@ -82,3 +82,7 @@ Todos começam `false`: `LIVE_CALLS_ENABLED`, `MEET_DETECTION_ENABLED`, `ZOOM_DE
 - aplicar migration/RLS no PostgreSQL e fazer soak/load com infraestrutura real.
 
 Teams, bot participante, browser extension, gravação bruta, envio automático e Fase 9 não fazem parte desta entrega.
+
+# Encerramento e pós-call
+
+Encerrar uma sessão cria atomicamente o relatório `PROCESSING` e o job pós-call. O resultado chega por `call_report.ready`; falhas terminais usam `call_report.failed` e podem ser reenfileiradas sem trocar para uma role administrativa. O transcript canônico continua sendo `live_transcript_turns` com `is_final=true`.

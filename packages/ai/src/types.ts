@@ -1,7 +1,13 @@
 import type { DealStateSnapshot, StrategyType } from '@morubi/intelligence';
+import type { PostCallAnalysisInput, PostCallAnalysisResult } from '@morubi/post-call';
 
-export const generativeProfiles = ['FAST_GENERATION', 'DEEP_REASONING'] as const;
+export const generativeProfiles = [
+  'FAST_GENERATION',
+  'DEEP_REASONING',
+  'POST_CALL_ANALYSIS'
+] as const;
 export type GenerativeProfile = (typeof generativeProfiles)[number];
+export type InterventionGenerativeProfile = Exclude<GenerativeProfile, 'POST_CALL_ANALYSIS'>;
 
 export const generationTypes = ['INTERVENTION_GUIDANCE', 'SUGGESTED_QUESTION'] as const;
 export type GenerationType = (typeof generationTypes)[number];
@@ -9,7 +15,7 @@ export type GenerationType = (typeof generationTypes)[number];
 export type GenerationValidationResult = 'VALID' | 'INVALID' | 'REVIEW_REQUIRED';
 
 export interface GenerationInput {
-  profile: GenerativeProfile;
+  profile: InterventionGenerativeProfile;
   generationType: GenerationType;
   strategy: StrategyType;
   interventionType: string;
@@ -52,6 +58,10 @@ export interface GenerativeProviderMetadata {
 export interface GenerativeProvider {
   readonly metadata: GenerativeProviderMetadata;
   generate(input: GenerationInput, signal?: AbortSignal): Promise<ProviderGenerationResult>;
+  analyzePostCall(
+    input: PostCallAnalysisInput,
+    signal?: AbortSignal
+  ): Promise<PostCallAnalysisResult>;
 }
 
 export interface GenerationValidation {
@@ -61,7 +71,7 @@ export interface GenerationValidation {
 }
 
 export interface GenerationRunResult {
-  profile: GenerativeProfile;
+  profile: InterventionGenerativeProfile;
   provider: string;
   model: string;
   output: GenerationOutput | null;

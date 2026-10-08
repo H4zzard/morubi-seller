@@ -55,7 +55,7 @@
       {
         "name": "Morubi",
         "schemes": [
-          "morubi"
+          "morubi-app"
         ]
       }
     ],

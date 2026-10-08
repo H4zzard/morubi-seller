@@ -23,9 +23,7 @@ import {
   dealContacts,
   deals,
   externalEntityIdentities,
-  memberships,
-  messages,
-  user
+  messages
 } from './schema.js';
 import { setTenantContext } from './tenant.js';
 
@@ -373,16 +371,8 @@ export class DealRepository {
       }
       if (input.search) conditions.push(ilike(deals.title, `%${input.search}%`));
       const rows = await tx
-        .select({ deal: deals, ownerName: user.name })
+        .select({ deal: deals, ownerName: sql<string | null>`null::text` })
         .from(deals)
-        .leftJoin(
-          memberships,
-          and(
-            eq(memberships.id, deals.ownerMembershipId),
-            eq(memberships.organizationId, deals.organizationId)
-          )
-        )
-        .leftJoin(user, eq(user.id, memberships.userId))
         .where(and(...conditions))
         .orderBy(desc(deals.updatedAt), desc(deals.id))
         .limit(input.limit + 1);
@@ -411,16 +401,8 @@ export class DealRepository {
     return this.db.transaction(async (tx) => {
       await setTenantContext(tx, this.context);
       const [row] = await tx
-        .select({ deal: deals, ownerName: user.name })
+        .select({ deal: deals, ownerName: sql<string | null>`null::text` })
         .from(deals)
-        .leftJoin(
-          memberships,
-          and(
-            eq(memberships.id, deals.ownerMembershipId),
-            eq(memberships.organizationId, deals.organizationId)
-          )
-        )
-        .leftJoin(user, eq(user.id, memberships.userId))
         .where(
           and(
             eq(deals.organizationId, this.context.organizationId),

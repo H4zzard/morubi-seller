@@ -9,7 +9,7 @@ import {
 } from '@morubi/domain';
 import { can, permissionsForRole } from '@morubi/permissions';
 import type { MorubiDatabase } from './database.js';
-import { auditLogs, memberships, organizations, user } from './schema.js';
+import { auditLogs, memberships, organizations } from './schema.js';
 import { setTenantContext, setUserContext } from './tenant.js';
 
 function organizationDto(row: typeof organizations.$inferSelect) {
@@ -155,29 +155,23 @@ export class MembershipRepository {
     return this.db.transaction(async (tx) => {
       await setTenantContext(tx, this.context);
       const rows = await tx
-        .select({ membership: memberships, member: user })
+        .select()
         .from(memberships)
-        .innerJoin(user, eq(user.id, memberships.userId))
         .where(eq(memberships.organizationId, this.context.organizationId))
-        .orderBy(asc(user.name));
-      return rows.map(({ membership, member }) => ({
-        ...membershipDto(membership),
-        user: { id: member.id, name: member.name, email: member.email }
-      }));
+        .orderBy(asc(memberships.createdAt));
+      return rows.map(membershipDto);
     });
   }
 
-  public async addByEmail(email: string, role: Role) {
+  public async addByUserId(userId: string, role: Role) {
     return this.db.transaction(async (tx) => {
       await setTenantContext(tx, this.context);
       if (role === 'OWNER' && !can(this.context, 'membership.owner.manage')) {
         throw errors.forbidden();
       }
-      const [targetUser] = await tx.select().from(user).where(eq(user.email, email)).limit(1);
-      if (!targetUser) throw errors.notFound();
       const [membership] = await tx
         .insert(memberships)
-        .values({ organizationId: this.context.organizationId, userId: targetUser.id, role })
+        .values({ organizationId: this.context.organizationId, userId, role })
         .returning();
       if (!membership) throw new Error('Membership insert did not return a row');
       await insertAudit(tx, {

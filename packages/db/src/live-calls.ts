@@ -33,6 +33,7 @@ import {
   liveTranscriptTurns
 } from './schema.js';
 import { setTenantContext } from './tenant.js';
+import { enqueuePostCallInTransaction } from './post-call.js';
 
 type DatabaseTransaction = Parameters<Parameters<MorubiDatabase['transaction']>[0]>[0];
 type SessionStatus = typeof liveCallSessions.$inferSelect.status;
@@ -705,7 +706,11 @@ export class LiveCallRepository {
     };
   }
 
-  public async end(sessionId: string): Promise<LiveCallSessionDto> {
+  public async end(
+    sessionId: string,
+    correlationId = `post-call:${sessionId}`,
+    postCallEnabled = true
+  ): Promise<LiveCallSessionDto> {
     return this.run(async (tx) => {
       const session = await this.loadOwnedForUpdate(tx, sessionId);
       if (session.status === 'ENDED') return sessionDto(session);
@@ -728,6 +733,15 @@ export class LiveCallRepository {
             eq(callUsage.liveCallSessionId, session.id)
           )
         );
+      if (postCallEnabled)
+        await enqueuePostCallInTransaction(tx, {
+          organizationId: this.context.organizationId,
+          sessionId: session.id,
+          sellerMembershipId: session.sellerMembershipId,
+          dealId: session.dealId,
+          conversationId: session.conversationId,
+          correlationId
+        });
       return sessionDto(updated!);
     });
   }

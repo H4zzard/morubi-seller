@@ -767,6 +767,40 @@ body,
   justify-items: center;
   text-align: center;
 }
+
+.live-report-status {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.45rem 0.8rem;
+  font-size: 0.78rem;
+}
+
+.live-report-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.8rem;
+  width: min(900px, 100%);
+  text-align: left;
+}
+
+.live-report-grid article {
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 1rem;
+  background: var(--surface);
+}
+
+.live-report-grid h2 {
+  margin: 0 0 0.5rem;
+  font-size: 0.9rem;
+}
+
+.live-report-grid p,
+.live-report-grid ul {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+}
 .live-calls--waiting h1,
 .live-detected h1,
 .live-ended h1 {

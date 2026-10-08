@@ -2,6 +2,7 @@ import { relations, sql } from 'drizzle-orm';
 import type { DealStateSnapshot, DecisionOutput, PolicyThresholds } from '@morubi/intelligence';
 import type { GenerationOutput } from '@morubi/ai';
 import type { LiveCallMemory } from '@morubi/live-calls';
+import type { PostCallProposal, PostCallReportContent } from '@morubi/post-call';
 import {
   bigint,
   boolean,
@@ -280,6 +281,20 @@ export const liveCallSessionStatus = pgEnum('live_call_session_status', [
   'ENDED',
   'FAILED',
   'CANCELLED'
+]);
+export const postCallJobStatus = pgEnum('post_call_job_status', [
+  'PENDING',
+  'PROCESSING',
+  'COMPLETED',
+  'FAILED',
+  'RETRY',
+  'CANCELLED'
+]);
+export const callReportStatus = pgEnum('call_report_status', ['PROCESSING', 'READY', 'FAILED']);
+export const callReportRevisionStatus = pgEnum('call_report_revision_status', [
+  'CURRENT',
+  'SUPERSEDED',
+  'REJECTED'
 ]);
 export const liveCaptureMode = pgEnum('live_capture_mode', [
   'MICROPHONE',
@@ -1078,6 +1093,135 @@ export const callUsage = pgTable(
   ]
 );
 
+export const postCallJobs = pgTable(
+  'post_call_jobs',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    organizationId: uuid('organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
+    liveCallSessionId: uuid('live_call_session_id').notNull(),
+    processingVersion: text('processing_version').notNull(),
+    status: postCallJobStatus('status').default('PENDING').notNull(),
+    attempts: integer('attempts').default(0).notNull(),
+    maxAttempts: integer('max_attempts').default(3).notNull(),
+    availableAt: timestamp('available_at', { withTimezone: true }).defaultNow().notNull(),
+    lockedAt: timestamp('locked_at', { withTimezone: true }),
+    finishedAt: timestamp('finished_at', { withTimezone: true }),
+    correlationId: text('correlation_id').notNull(),
+    priority: integer('priority').default(10).notNull(),
+    errorCode: text('error_code'),
+    ...timestamps
+  },
+  (table) => [
+    uniqueIndex('post_call_jobs_organization_id_uidx').on(table.organizationId, table.id),
+    uniqueIndex('post_call_jobs_processing_uidx').on(
+      table.organizationId,
+      table.liveCallSessionId,
+      table.processingVersion
+    ),
+    foreignKey({
+      columns: [table.organizationId, table.liveCallSessionId],
+      foreignColumns: [liveCallSessions.organizationId, liveCallSessions.id],
+      name: 'post_call_jobs_organization_session_fk'
+    }).onDelete('cascade'),
+    index('post_call_jobs_claim_idx').on(
+      table.status,
+      table.priority,
+      table.availableAt,
+      table.createdAt
+    ),
+    check(
+      'post_call_jobs_attempts_check',
+      sql`${table.attempts} >= 0 and ${table.maxAttempts} between 1 and 10 and ${table.priority} between 0 and 50`
+    )
+  ]
+);
+
+export const callReports = pgTable(
+  'call_reports',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    organizationId: uuid('organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
+    liveCallSessionId: uuid('live_call_session_id').notNull(),
+    status: callReportStatus('status').default('PROCESSING').notNull(),
+    processingVersion: text('processing_version').notNull(),
+    failureCode: text('failure_code'),
+    readyAt: timestamp('ready_at', { withTimezone: true }),
+    ...timestamps
+  },
+  (table) => [
+    uniqueIndex('call_reports_organization_id_uidx').on(table.organizationId, table.id),
+    uniqueIndex('call_reports_session_uidx').on(table.organizationId, table.liveCallSessionId),
+    foreignKey({
+      columns: [table.organizationId, table.liveCallSessionId],
+      foreignColumns: [liveCallSessions.organizationId, liveCallSessions.id],
+      name: 'call_reports_organization_session_fk'
+    }).onDelete('cascade'),
+    index('call_reports_status_idx').on(table.organizationId, table.status, table.updatedAt)
+  ]
+);
+
+export const callReportRevisions = pgTable(
+  'call_report_revisions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    organizationId: uuid('organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
+    callReportId: uuid('call_report_id').notNull(),
+    liveCallSessionId: uuid('live_call_session_id').notNull(),
+    version: integer('version').notNull(),
+    status: callReportRevisionStatus('status').default('CURRENT').notNull(),
+    processingVersion: text('processing_version').notNull(),
+    provider: text('provider').notNull(),
+    model: text('model').notNull(),
+    profile: text('profile').default('POST_CALL_ANALYSIS').notNull(),
+    promptVersion: text('prompt_version').notNull(),
+    configVersion: text('config_version').notNull(),
+    content: jsonb('content').$type<PostCallReportContent>().notNull(),
+    proposals: jsonb('proposals')
+      .$type<PostCallProposal[]>()
+      .default(sql`'[]'::jsonb`)
+      .notNull(),
+    inputTokens: integer('input_tokens').default(0).notNull(),
+    outputTokens: integer('output_tokens').default(0).notNull(),
+    estimatedCostMicros: bigint('estimated_cost_micros', { mode: 'bigint' })
+      .default(sql`0`)
+      .notNull(),
+    evidenceCount: integer('evidence_count').default(0).notNull(),
+    generatedAt: timestamp('generated_at', { withTimezone: true }).defaultNow().notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull()
+  },
+  (table) => [
+    uniqueIndex('call_report_revisions_organization_id_uidx').on(table.organizationId, table.id),
+    uniqueIndex('call_report_revisions_version_uidx').on(
+      table.organizationId,
+      table.callReportId,
+      table.version
+    ),
+    uniqueIndex('call_report_revisions_current_uidx')
+      .on(table.organizationId, table.callReportId)
+      .where(sql`${table.status} = 'CURRENT'`),
+    foreignKey({
+      columns: [table.organizationId, table.callReportId],
+      foreignColumns: [callReports.organizationId, callReports.id],
+      name: 'call_report_revisions_organization_report_fk'
+    }).onDelete('cascade'),
+    foreignKey({
+      columns: [table.organizationId, table.liveCallSessionId],
+      foreignColumns: [liveCallSessions.organizationId, liveCallSessions.id],
+      name: 'call_report_revisions_organization_session_fk'
+    }).onDelete('cascade'),
+    check(
+      'call_report_revisions_values_check',
+      sql`${table.version} > 0 and ${table.inputTokens} >= 0 and ${table.outputTokens} >= 0 and ${table.estimatedCostMicros} >= 0 and ${table.evidenceCount} > 0 and ${table.profile} = 'POST_CALL_ANALYSIS'`
+    )
+  ]
+);
+
 export const externalEntityIdentities = pgTable(
   'external_entity_identities',
   {
@@ -1649,12 +1793,13 @@ export const aiUsage = pgTable(
       .references(() => organizations.id, { onDelete: 'cascade' }),
     aiDecisionId: uuid('ai_decision_id'),
     generativeExecutionId: uuid('generative_execution_id'),
+    callReportRevisionId: uuid('call_report_revision_id'),
     audioAssetId: uuid('audio_asset_id'),
     audioTranscriptId: uuid('audio_transcript_id'),
     liveCallSessionId: uuid('live_call_session_id'),
     liveTranscriptTurnId: uuid('live_transcript_turn_id'),
-    dealId: uuid('deal_id').notNull(),
-    commercialEventId: uuid('commercial_event_id').notNull(),
+    dealId: uuid('deal_id'),
+    commercialEventId: uuid('commercial_event_id'),
     sellerMembershipId: uuid('seller_membership_id'),
     conversationId: uuid('conversation_id'),
     interventionCandidateId: uuid('intervention_candidate_id'),
@@ -1681,6 +1826,15 @@ export const aiUsage = pgTable(
     uniqueIndex('ai_usage_organization_id_uidx').on(table.organizationId, table.id),
     uniqueIndex('ai_usage_decision_uidx').on(table.organizationId, table.aiDecisionId),
     uniqueIndex('ai_usage_generation_uidx').on(table.organizationId, table.generativeExecutionId),
+    uniqueIndex('ai_usage_call_report_revision_uidx').on(
+      table.organizationId,
+      table.callReportRevisionId
+    ),
+    foreignKey({
+      columns: [table.organizationId, table.callReportRevisionId],
+      foreignColumns: [callReportRevisions.organizationId, callReportRevisions.id],
+      name: 'ai_usage_organization_call_report_revision_fk'
+    }).onDelete('cascade'),
     foreignKey({
       columns: [table.organizationId, table.aiDecisionId],
       foreignColumns: [aiDecisions.organizationId, aiDecisions.id],
@@ -2021,7 +2175,7 @@ export const realtimeEvents = pgTable(
     ),
     check(
       'realtime_events_type_check',
-      sql`${table.type} in ('intervention.created', 'intervention.updated', 'deal_state.updated')`
+      sql`${table.type} in ('intervention.created', 'intervention.updated', 'deal_state.updated', 'call_report.processing', 'call_report.ready', 'call_report.failed')`
     ),
     check('realtime_events_version_check', sql`${table.version} = 1`)
   ]

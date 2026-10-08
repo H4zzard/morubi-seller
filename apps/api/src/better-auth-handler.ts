@@ -1,8 +1,18 @@
 import type { FastifyInstance } from 'fastify';
 import { fromNodeHeaders } from 'better-auth/node';
 import type { MorubiAuth } from '@morubi/auth';
+import type { ApiEnv } from '@morubi/config';
 import type { UserDto } from '@morubi/contracts';
 import type { SessionResolver } from './types.js';
+
+export function trustedAuthOrigins(
+  env: Pick<ApiEnv, 'NODE_ENV' | 'WEB_ORIGIN' | 'DESKTOP_DEV_ORIGIN' | 'DESKTOP_APP_ORIGIN'>
+): [string, string] {
+  return [
+    env.WEB_ORIGIN,
+    env.NODE_ENV === 'production' ? env.DESKTOP_APP_ORIGIN : env.DESKTOP_DEV_ORIGIN
+  ];
+}
 
 function copyResponseHeaders(
   response: Response,
@@ -44,12 +54,22 @@ export function sessionResolverFromAuth(auth: MorubiAuth): SessionResolver {
 export function registerBetterAuthRoutes(
   app: FastifyInstance,
   auth: MorubiAuth,
-  baseUrl: string
+  baseUrl: string,
+  trustedOrigins: readonly string[]
 ): void {
   app.route({
     method: ['GET', 'POST'],
     url: '/api/auth/*',
     async handler(request, reply) {
+      if (request.method !== 'GET') {
+        const origin = request.headers.origin;
+        if (typeof origin !== 'string' || !trustedOrigins.includes(origin)) {
+          return reply.status(403).send({
+            code: origin ? 'UNTRUSTED_ORIGIN' : 'MISSING_OR_NULL_ORIGIN',
+            message: 'Origin validation failed'
+          });
+        }
+      }
       const url = new URL(request.url, baseUrl);
       const headers = fromNodeHeaders(request.headers);
       const body = request.body === undefined ? undefined : JSON.stringify(request.body);

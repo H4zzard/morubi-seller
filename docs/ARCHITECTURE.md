@@ -111,6 +111,8 @@ flowchart LR
 
 - Focado em manager/admin/owner, onboarding e organização.
 - Better Auth usa cookie `HttpOnly`; organização ativa é apenas uma seleção do cliente e nunca autoridade.
+- Better Auth usa um pool exclusivo (`AUTH_DATABASE_URL`) autenticado como `morubi_auth`. API e worker de domínio continuam exclusivamente em `DATABASE_URL`/`morubi_app`; migrations usam a URL administrativa. O domínio consulta identidades necessárias por uma interface do módulo auth, sem conceder acesso de tabela a `morubi_app`.
+- Em desenvolvimento, as únicas origens de auth são `WEB_ORIGIN` e `DESKTOP_DEV_ORIGIN`; em produção, localhost é substituído por `DESKTOP_APP_ORIGIN` (`morubi-app://app`). O Electron main envia `Origin` explicitamente e mantém cookies cifrados fora do renderer.
 - App Router e shell responsivo; backend de domínio não reside em routes/server actions do Next.js.
 
 ### Regras comuns
@@ -400,3 +402,7 @@ O áudio nunca segue diretamente para geração. A promoção cria `CommercialEv
 `@morubi/live-calls` contém contratos puros de detecção, captura, STT realtime, agregação, memória, fases, buffer e política de cards. O desktop hospeda o adapter autorizado de microfone e a UI; API e `@morubi/db` controlam lifecycle, consentimento, turns e tenancy; o worker existente recupera sessões stale e processa o mesmo pipeline de intelligence/generation.
 
 O único caminho para inferência continua sendo `CommercialEvent`. Turno final de call vira `CALL_TRANSCRIPT` e job prioritário na fila PostgreSQL já existente; partial nunca altera estado. Provider realtime, observadores reais de Meet/Zoom e áudio do sistema continuam boundaries não implementados. Veja `LIVE_CALLS.md`.
+
+# Fase 9 — post-call intelligence
+
+Após `LiveCallSession(ENDED)`, a API enfileira análise durável no PostgreSQL. O worker segmenta o transcript, usa o mesmo `GenerativeProvider` com perfil `POST_CALL_ANALYSIS`, valida evidências e persiste revisões imutáveis. O modelo apenas propõe atualizações; `IntelligenceProcessor` permanece a autoridade de DealState/Memory. Consulte [POST_CALL_INTELLIGENCE.md](./POST_CALL_INTELLIGENCE.md).

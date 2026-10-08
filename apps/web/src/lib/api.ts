@@ -12,6 +12,10 @@ export function setActiveOrganizationId(value: string): void {
   window.localStorage.setItem(organizationStorageKey, value);
 }
 
+export function clearActiveOrganizationId(): void {
+  window.localStorage.removeItem(organizationStorageKey);
+}
+
 export const apiClient = new ApiClient({
   baseUrl: webEnv.NEXT_PUBLIC_API_URL,
   getOrganizationId: getActiveOrganizationId,

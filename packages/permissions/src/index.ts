@@ -19,7 +19,9 @@ export const permissions = [
   'intelligence.dev.read',
   'intervention.viewOwn',
   'intervention.feedbackOwn',
-  'intelligence.dev.inspect'
+  'intelligence.dev.inspect',
+  'call.report.read',
+  'call.report.retry'
 ] as const;
 
 export type Permission = (typeof permissions)[number];
@@ -31,7 +33,9 @@ const rolePermissions: Record<Role, readonly Permission[]> = {
     'commercial.read',
     'intelligence.read',
     'intervention.viewOwn',
-    'intervention.feedbackOwn'
+    'intervention.feedbackOwn',
+    'call.report.read',
+    'call.report.retry'
   ],
   MANAGER: [
     'organization.view',
@@ -42,7 +46,9 @@ const rolePermissions: Record<Role, readonly Permission[]> = {
     'integration.read',
     'intelligence.read',
     'intervention.viewOwn',
-    'intervention.feedbackOwn'
+    'intervention.feedbackOwn',
+    'call.report.read',
+    'call.report.retry'
   ],
   ADMIN: [
     'organization.view',
@@ -61,7 +67,9 @@ const rolePermissions: Record<Role, readonly Permission[]> = {
     'intelligence.dev.read',
     'intervention.viewOwn',
     'intervention.feedbackOwn',
-    'intelligence.dev.inspect'
+    'intelligence.dev.inspect',
+    'call.report.read',
+    'call.report.retry'
   ],
   OWNER: [...permissions]
 };

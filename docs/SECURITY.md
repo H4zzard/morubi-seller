@@ -55,6 +55,7 @@ flowchart LR
 - `organization_id NOT NULL`, índices tenant-first e uniques compostos.
 - RLS como defesa em profundidade; `SET LOCAL` dentro da transação e pool testado contra vazamento de sessão.
 - Conta de runtime sem bypass RLS; migrations/admin usam credencial separada e auditada.
+- As tabelas `users`, `accounts`, `sessions` e `verifications` usam RLS habilitada e forçada. Somente `morubi_auth` recebe `SELECT/INSERT/UPDATE/DELETE` e policies integrais nessas quatro tabelas; essa role backend é `NOSUPERUSER`, `NOBYPASSRLS`, `NOCREATEDB`, `NOCREATEROLE` e `NOINHERIT`. `morubi_app` não possui privilégios nelas e `morubi_auth` não possui privilégios nas tabelas comerciais.
 - Views/materialized views preservam tenant; função `SECURITY DEFINER` é exceção revisada.
 
 ### Testes obrigatórios
@@ -67,6 +68,7 @@ flowchart LR
 
 - Preferir provedor OIDC/OAuth maduro; MFA obrigatório para owner/admin e recomendado para todos.
 - Cookies `HttpOnly`, `Secure`, `SameSite`; proteção CSRF para mutações baseadas em cookie.
+- POSTs do Better Auth exigem uma origem da allowlist exata. Ausência ou origem não confiável falha com 403; CORS wildcard e desativação de CSRF são proibidos.
 - Sessões curtas com rotação/revogação; device/session list quando viável.
 - Convite com token single-use, prazo curto e vínculo à organização/email.
 - SSO/SAML e SCIM são NEXT/LATER conforme enterprise, sem bloquear RBAC correto no MVP.
@@ -303,3 +305,7 @@ Antes de produção, faltam secrets manager real, provider/OAuth, worker duráve
 - Transcript é conteúdo não confiável; geração mantém sanitização, validação, policy e staleness existentes.
 - Tabelas live têm RLS forçada e FKs compostas. Seller só gerencia a própria sessão e ownership do deal continua aplicado.
 - Antes de produção faltam DPA/região do STT, permissões/assinatura por SO, threat model de captura remota, observadores autorizados, egress control, corpus humano e validação PostgreSQL.
+
+# Controles pós-call
+
+Relatórios e transcripts respeitam tenant e ownership do seller; manager/admin/owner permanecem limitados ao tenant. O modelo recebe transcript como dado não confiável, não executa instruções encontradas nele e não escreve DealState/Memory diretamente. Logs e eventos não carregam conteúdo do transcript, output completo ou credenciais. As tabelas da Fase 9 usam RLS forçada e a role runtime continua sem superuser/bypass.

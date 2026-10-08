@@ -30,6 +30,7 @@ CREATE TABLE "audio_assets" (
 	CONSTRAINT "audio_assets_limits_check" CHECK ("audio_assets"."size_bytes" > 0 and "audio_assets"."duration_ms" > 0)
 );
 --> statement-breakpoint
+CREATE UNIQUE INDEX "audio_assets_organization_id_uidx" ON "audio_assets" USING btree ("organization_id","id");--> statement-breakpoint
 CREATE TABLE "audio_transcripts" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"organization_id" uuid NOT NULL,
@@ -72,6 +73,7 @@ CREATE TABLE "transcription_jobs" (
 	CONSTRAINT "transcription_jobs_attempts_check" CHECK ("transcription_jobs"."attempts" >= 0 and "transcription_jobs"."max_attempts" > 0)
 );
 --> statement-breakpoint
+CREATE UNIQUE INDEX "transcription_jobs_organization_id_uidx" ON "transcription_jobs" USING btree ("organization_id","id");--> statement-breakpoint
 ALTER TABLE "intelligence_settings" DROP CONSTRAINT "intelligence_settings_card_limits_check";--> statement-breakpoint
 ALTER TABLE "ai_usage" ADD COLUMN "audio_asset_id" uuid;--> statement-breakpoint
 ALTER TABLE "ai_usage" ADD COLUMN "audio_transcript_id" uuid;--> statement-breakpoint
@@ -93,7 +95,6 @@ ALTER TABLE "audio_transcripts" ADD CONSTRAINT "audio_transcripts_organization_a
 ALTER TABLE "audio_transcripts" ADD CONSTRAINT "audio_transcripts_organization_job_fk" FOREIGN KEY ("organization_id","transcription_job_id") REFERENCES "public"."transcription_jobs"("organization_id","id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "transcription_jobs" ADD CONSTRAINT "transcription_jobs_organization_id_organizations_id_fk" FOREIGN KEY ("organization_id") REFERENCES "public"."organizations"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "transcription_jobs" ADD CONSTRAINT "transcription_jobs_organization_asset_fk" FOREIGN KEY ("organization_id","audio_asset_id") REFERENCES "public"."audio_assets"("organization_id","id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-CREATE UNIQUE INDEX "audio_assets_organization_id_uidx" ON "audio_assets" USING btree ("organization_id","id");--> statement-breakpoint
 CREATE UNIQUE INDEX "audio_assets_idempotency_uidx" ON "audio_assets" USING btree ("organization_id","idempotency_key");--> statement-breakpoint
 CREATE UNIQUE INDEX "audio_assets_message_uidx" ON "audio_assets" USING btree ("organization_id","message_id");--> statement-breakpoint
 CREATE UNIQUE INDEX "audio_assets_storage_key_uidx" ON "audio_assets" USING btree ("storage_key");--> statement-breakpoint
@@ -103,7 +104,6 @@ CREATE UNIQUE INDEX "audio_transcripts_asset_version_uidx" ON "audio_transcripts
 CREATE UNIQUE INDEX "audio_transcripts_job_uidx" ON "audio_transcripts" USING btree ("organization_id","transcription_job_id");--> statement-breakpoint
 CREATE INDEX "audio_transcripts_current_idx" ON "audio_transcripts" USING btree ("organization_id","audio_asset_id","status");--> statement-breakpoint
 CREATE UNIQUE INDEX "audio_transcripts_one_current_uidx" ON "audio_transcripts" ("organization_id", "audio_asset_id") WHERE "status" = 'CURRENT';--> statement-breakpoint
-CREATE UNIQUE INDEX "transcription_jobs_organization_id_uidx" ON "transcription_jobs" USING btree ("organization_id","id");--> statement-breakpoint
 CREATE UNIQUE INDEX "transcription_jobs_processing_key_uidx" ON "transcription_jobs" USING btree ("organization_id","processing_key");--> statement-breakpoint
 CREATE INDEX "transcription_jobs_claim_idx" ON "transcription_jobs" USING btree ("status","available_at","created_at");--> statement-breakpoint
 ALTER TABLE "ai_usage" ADD CONSTRAINT "ai_usage_organization_audio_asset_fk" FOREIGN KEY ("organization_id","audio_asset_id") REFERENCES "public"."audio_assets"("organization_id","id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint

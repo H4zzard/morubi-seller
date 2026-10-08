@@ -1,4 +1,4 @@
-import type { GenerativeProfile, GenerationInput } from './types.js';
+import type { InterventionGenerativeProfile, GenerationInput } from './types.js';
 
 export interface GenerativeRoutingPolicy {
   deepReasoningStrategies: string[];
@@ -15,7 +15,7 @@ export class GenerativeRouter {
     private readonly policy: GenerativeRoutingPolicy = defaultGenerativeRoutingPolicy
   ) {}
 
-  public route(input: Omit<GenerationInput, 'profile'>): GenerativeProfile {
+  public route(input: Omit<GenerationInput, 'profile'>): InterventionGenerativeProfile {
     const contextSize =
       input.currentEvent.text.length +
       input.hotContext.reduce((sum, item) => sum + item.text.length, 0) +

@@ -2,6 +2,7 @@ export * from './cost.js';
 export * from './engine.js';
 export * from './evaluation.js';
 export * from './prompt.js';
+export * from './post-call-prompt.js';
 export * from './providers.js';
 export * from './router.js';
 export * from './sanitizer.js';

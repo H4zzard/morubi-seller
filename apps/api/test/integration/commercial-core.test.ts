@@ -17,11 +17,11 @@ import {
 } from '@morubi/db';
 import type { TenantContext } from '@morubi/domain';
 import { buildApp } from '../../src/app.js';
+import { getTestDatabaseEnvironment } from './test-database-env.js';
 
-const adminUrl = process.env.TEST_DATABASE_ADMIN_URL;
-const runtimeUrl = process.env.TEST_DATABASE_URL;
+const { adminUrl, runtimeUrl } = getTestDatabaseEnvironment();
 
-describe.skipIf(!adminUrl || !runtimeUrl)('commercial core tenant and ingestion invariants', () => {
+describe('commercial core tenant and ingestion invariants', () => {
   const userAId = `commercial-a-${randomUUID()}`;
   const userBId = `commercial-b-${randomUUID()}`;
   const organizationAId = randomUUID();
@@ -48,8 +48,8 @@ describe.skipIf(!adminUrl || !runtimeUrl)('commercial core tenant and ingestion 
   });
 
   beforeAll(async () => {
-    admin = createDatabase(adminUrl!);
-    runtime = createDatabase(runtimeUrl!);
+    admin = createDatabase(adminUrl);
+    runtime = createDatabase(runtimeUrl);
     await admin.db.insert(user).values([
       { id: userAId, name: 'Commercial A', email: `${userAId}@example.test` },
       { id: userBId, name: 'Commercial B', email: `${userBId}@example.test` }
@@ -236,7 +236,7 @@ describe.skipIf(!adminUrl || !runtimeUrl)('commercial core tenant and ingestion 
       relrowsecurity: boolean;
       relforcerowsecurity: boolean;
     }>(
-      'select relname, relrowsecurity, relforcerowsecurity from pg_class where relname = any($1::text[]) order by relname',
+      "select relname, relrowsecurity, relforcerowsecurity from pg_class where relnamespace = 'public'::regnamespace and relname = any($1::text[]) order by relname",
       [tableNames]
     );
     expect(result.rows).toHaveLength(tableNames.length);
@@ -258,16 +258,18 @@ describe.skipIf(!adminUrl || !runtimeUrl)('commercial core tenant and ingestion 
       client.release();
     }
 
-    const apiDatabase = createDatabase(runtimeUrl!);
+    const apiDatabase = createDatabase(runtimeUrl);
     const env: ApiEnv = {
       NODE_ENV: 'test',
       API_HOST: '127.0.0.1',
       API_PORT: 4000,
-      DATABASE_URL: runtimeUrl!,
+      DATABASE_URL: runtimeUrl,
+      AUTH_DATABASE_URL: runtimeUrl,
       BETTER_AUTH_SECRET: 'test-secret-with-at-least-thirty-two-characters',
       BETTER_AUTH_URL: 'http://localhost:4000',
       WEB_ORIGIN: 'http://localhost:3000',
       DESKTOP_DEV_ORIGIN: 'http://localhost:5173',
+      DESKTOP_APP_ORIGIN: 'morubi-app://app',
       LOG_LEVEL: 'silent',
       TRUST_PROXY: false,
       INTELLIGENCE_ENABLED: true,
@@ -287,6 +289,7 @@ describe.skipIf(!adminUrl || !runtimeUrl)('commercial core tenant and ingestion 
       LIVE_TRANSCRIPTION_ENABLED: false,
       LIVE_COPILOT_ENABLED: false,
       LIVE_GENERATION_ENABLED: false,
+      POST_CALL_INTELLIGENCE_ENABLED: false,
       LIVE_TRANSCRIPTION_COST_MICROS_PER_MINUTE: 0,
       AUDIO_STORAGE_ROOT: '.data/audio-test',
       AUDIO_MAX_BYTES: 20_971_520,

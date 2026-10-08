@@ -424,6 +424,9 @@ importers:
       '@morubi/intelligence':
         specifier: workspace:*
         version: link:../intelligence
+      '@morubi/post-call':
+        specifier: workspace:*
+        version: link:../post-call
       zod:
         specifier: 4.6.5
         version: 4.6.5
@@ -440,12 +443,18 @@ importers:
       '@better-auth/drizzle-adapter':
         specifier: 1.7.7
         version: 1.7.7(@better-auth/core@1.7.7(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.2)(better-call@1.4.0(zod@4.6.5))(jose@6.2.12)(kysely@0.29.6)(nanostores@1.5.4))(@better-auth/utils@0.4.2)(drizzle-orm@0.45.3(@types/pg@8.23.1)(kysely@0.29.6)(pg@8.23.1))
+      '@morubi/contracts':
+        specifier: workspace:*
+        version: link:../contracts
       '@morubi/db':
         specifier: workspace:*
         version: link:../db
       better-auth:
         specifier: 1.7.7
         version: 1.7.7(drizzle-kit@0.31.11)(drizzle-orm@0.45.3(@types/pg@8.23.1)(kysely@0.29.6)(pg@8.23.1))(next@16.3.8(@babel/core@7.29.7(supports-color@7.2.0))(@playwright/test@1.63.0)(@types/node@24.10.1)(react-dom@19.3.0(react@19.3.0))(react@19.3.0))(pg@8.23.1)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(vitest@5.0.3(@types/node@24.10.1)(vite@8.3.2(@types/node@24.10.1)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)))
+      drizzle-orm:
+        specifier: 0.45.3
+        version: 0.45.3(@types/pg@8.23.1)(kysely@0.29.6)(pg@8.23.1)
     devDependencies:
       vitest:
         specifier: 5.0.3
@@ -462,6 +471,10 @@ importers:
         version: 5.0.3(@types/node@24.10.1)(vite@8.3.2(@types/node@24.10.1)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15))
 
   packages/contracts:
+    dependencies:
+      '@morubi/post-call':
+        specifier: workspace:*
+        version: link:../post-call
     devDependencies:
       vitest:
         specifier: 5.0.3
@@ -490,6 +503,9 @@ importers:
       '@morubi/permissions':
         specifier: workspace:*
         version: link:../permissions
+      '@morubi/post-call':
+        specifier: workspace:*
+        version: link:../post-call
       '@morubi/storage':
         specifier: workspace:*
         version: link:../storage
@@ -560,6 +576,16 @@ importers:
       '@morubi/domain':
         specifier: workspace:*
         version: link:../domain
+    devDependencies:
+      vitest:
+        specifier: 5.0.3
+        version: 5.0.3(@types/node@24.10.1)(vite@8.3.2(@types/node@24.10.1)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15))
+
+  packages/post-call:
+    dependencies:
+      zod:
+        specifier: 4.6.5
+        version: 4.6.5
     devDependencies:
       vitest:
         specifier: 5.0.3

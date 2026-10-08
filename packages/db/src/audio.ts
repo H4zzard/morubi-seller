@@ -755,9 +755,9 @@ export function syntheticWavFixture(text: string, durationMs = 1_000): Uint8Arra
 
 export const devAudioScenarios = {
   PRICE:
-    'O valor ficou acima do que eu esperava. VocÃª consegue explicar o retorno desse investimento?',
-  TIMING: 'Gostei da proposta, mas precisamos resolver isso ainda neste mÃªs.',
-  COMPETITOR: 'TambÃ©m estamos avaliando um concorrente e vamos comparar integraÃ§Ã£o e suporte.',
-  BUYING_SIGNAL: 'Faz sentido para nÃ³s. Pode enviar os prÃ³ximos passos e a minuta?',
+    'O valor ficou acima do que eu esperava. Você consegue explicar o retorno desse investimento?',
+  TIMING: 'Gostei da proposta, mas precisamos resolver isso ainda neste mês.',
+  COMPETITOR: 'Também estamos avaliando um concorrente e vamos comparar integração e suporte.',
+  BUYING_SIGNAL: 'Faz sentido para nós. Pode enviar os próximos passos e a minuta?',
   NEUTRAL: 'Obrigado pela conversa. Vou revisar o material com calma.'
 } as const;

@@ -603,3 +603,15 @@ ADRs simplificados. `MANDATED` deriva diretamente do brief; `PROPOSED` requer va
 - **Status:** ACCEPTED
 - **Decisão:** compactar/redimensionar a janela Electron existente, com always-on-top opt-in e sem transcript.
 - **Consequência:** evita overlay privilegiado adicional e reduz exposição visual durante a call.
+
+# ADR-009 — Relatórios pós-call revisionados
+
+Decisão: separar identidade (`call_reports`) de conteúdo imutável (`call_report_revisions`) e usar uma fila PostgreSQL idempotente (`post_call_jobs`). Motivo: retry, auditoria e reprocessamento não podem sobrescrever uma conclusão anterior.
+
+# ADR-010 — Evidência obrigatória e propostas sem escrita direta
+
+Decisão: toda afirmação factual cita turnos válidos; fatos sem evidência são removidos e campos críticos ausentes não são inferidos. O pós-call persiste propostas reconciliadas, mas somente o engine determinístico existente pode alterar DealState/Memory.
+
+# ADR-011 — Abstração generativa compartilhada
+
+Decisão: ampliar `GenerativeProvider` com `POST_CALL_ANALYSIS`, mantendo fixture sem egress e DeepSeek sob feature flag. Motivo: centralizar timeout, circuit breaker, metadados de modelo e custo sem acoplar domínio ao fornecedor.

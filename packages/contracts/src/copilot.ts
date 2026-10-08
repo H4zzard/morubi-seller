@@ -42,7 +42,13 @@ export interface InterventionCardDto {
 export interface RealtimeEventEnvelope {
   id: string;
   version: 1;
-  type: 'intervention.created' | 'intervention.updated' | 'deal_state.updated';
+  type:
+    | 'intervention.created'
+    | 'intervention.updated'
+    | 'deal_state.updated'
+    | 'call_report.processing'
+    | 'call_report.ready'
+    | 'call_report.failed';
   occurredAt: string;
   correlationId: string;
   conversationId: string | null;

@@ -64,6 +64,20 @@
       "when": 1791389951795,
       "tag": "0008_freezing_the_call",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1791477202319,
+      "tag": "0009_foamy_warhawk",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1791480000000,
+      "tag": "0010_auth_rls",
+      "breakpoints": true
     }
   ]
 }

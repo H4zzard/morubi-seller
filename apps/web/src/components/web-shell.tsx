@@ -5,6 +5,7 @@ import {
   BookOpen,
   BriefcaseBusiness,
   ContactRound,
+  LogOut,
   Menu,
   Settings,
   UsersRound,
@@ -16,7 +17,12 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import type { OrganizationChoiceDto, Role, SessionDto } from '@morubi/contracts';
 import { MorubiMark } from '@morubi/ui';
 import { authClient } from '../lib/auth-client';
-import { apiClient, getActiveOrganizationId, setActiveOrganizationId } from '../lib/api';
+import {
+  apiClient,
+  clearActiveOrganizationId,
+  getActiveOrganizationId,
+  setActiveOrganizationId
+} from '../lib/api';
 import { webEnv } from '../lib/env';
 
 interface WebNavigationItem {
@@ -163,6 +169,20 @@ export function WebShell({ children }: { children: ReactNode }) {
         <div className="sidebar__footer">
           <strong style={{ color: 'var(--text)' }}>{session.user.name}</strong>
           <div>{session.user.email}</div>
+          <button
+            type="button"
+            aria-label="Sair"
+            onClick={() => {
+              void (async () => {
+                await authClient.signOut();
+                clearActiveOrganizationId();
+                window.location.replace('/login');
+              })();
+            }}
+          >
+            <LogOut size={16} aria-hidden />
+            Sair
+          </button>
         </div>
       </aside>
       <div className="shell-main">

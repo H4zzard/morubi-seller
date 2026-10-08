@@ -50,6 +50,7 @@ export interface WorkerQueueSnapshot {
   transcriptRetentionPending: number;
   intelligencePending: number;
   generationPending: number;
+  postCallPending: number;
 }
 
 export function workerTenantContext(organizationId: string): TenantContext {
@@ -95,6 +96,12 @@ export async function listWorkerQueues(db: MorubiDatabase): Promise<WorkerQueueS
         where j.organization_id = ${organizations.id}
           and (j.status = 'PENDING' or (j.status = 'RUNNING' and j.locked_at < now() - interval '5 minutes'))
           and j.available_at <= now()
+      )`,
+      postCallPending: sql<number>`(
+        select count(*)::int from post_call_jobs j
+        where j.organization_id = ${organizations.id}
+          and (j.status in ('PENDING', 'RETRY') or (j.status = 'PROCESSING' and j.locked_at < now() - interval '10 minutes'))
+          and j.available_at <= now()
       )`
     })
     .from(organizations);
@@ -104,7 +111,8 @@ export async function listWorkerQueues(db: MorubiDatabase): Promise<WorkerQueueS
       row.transcriptRetentionPending > 0 ||
       row.transcriptionPending > 0 ||
       row.intelligencePending > 0 ||
-      row.generationPending > 0
+      row.generationPending > 0 ||
+      row.postCallPending > 0
   );
 }
 

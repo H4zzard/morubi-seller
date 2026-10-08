@@ -13,11 +13,11 @@ import {
   type DatabaseHandle
 } from '@morubi/db';
 import { buildApp } from '../../src/app.js';
+import { getTestDatabaseEnvironment } from './test-database-env.js';
 
-const adminUrl = process.env.TEST_DATABASE_ADMIN_URL;
-const runtimeUrl = process.env.TEST_DATABASE_URL;
+const { adminUrl, runtimeUrl } = getTestDatabaseEnvironment();
 
-describe.skipIf(!adminUrl || !runtimeUrl)('critical tenant boundary', () => {
+describe('critical tenant boundary', () => {
   const userAId = `user-a-${randomUUID()}`;
   const userBId = `user-b-${randomUUID()}`;
   const userCId = `user-c-${randomUUID()}`;
@@ -27,8 +27,8 @@ describe.skipIf(!adminUrl || !runtimeUrl)('critical tenant boundary', () => {
   let runtime: DatabaseHandle;
 
   beforeAll(async () => {
-    admin = createDatabase(adminUrl!);
-    runtime = createDatabase(runtimeUrl!);
+    admin = createDatabase(adminUrl);
+    runtime = createDatabase(runtimeUrl);
     await admin.db.insert(user).values([
       { id: userAId, name: 'User A', email: `${userAId}@example.test` },
       { id: userBId, name: 'User B', email: `${userBId}@example.test` },
@@ -56,12 +56,22 @@ describe.skipIf(!adminUrl || !runtimeUrl)('critical tenant boundary', () => {
     await admin.close();
   });
 
-  it('repository scoped to A never returns memberships from B', async () => {
-    const context = await resolveTenantContext(runtime.db, userAId, organizationAId);
-    expect(context).not.toBeNull();
-    const rows = await new MembershipRepository(runtime.db, context!).list();
-    expect(rows).toHaveLength(1);
-    expect(rows[0]?.organizationId).toBe(organizationAId);
+  it('runtime scoped to A never returns memberships from B', async () => {
+    const client = await runtime.pool.connect();
+    try {
+      await client.query('begin');
+      await client.query(
+        "select set_config('app.current_user_id', $1, true), set_config('app.current_organization_id', $2, true)",
+        [userAId, organizationAId]
+      );
+      const result = await client.query<{ organization_id: string }>(
+        'select organization_id from memberships order by organization_id'
+      );
+      expect(result.rows).toEqual([{ organization_id: organizationAId }]);
+      await client.query('rollback');
+    } finally {
+      client.release();
+    }
   });
 
   it('RLS blocks a direct read and write from A into B', async () => {
@@ -138,16 +148,18 @@ describe.skipIf(!adminUrl || !runtimeUrl)('critical tenant boundary', () => {
   });
 
   it('API returns a safe not found when User A selects Organization B', async () => {
-    const apiDatabase = createDatabase(runtimeUrl!);
+    const apiDatabase = createDatabase(runtimeUrl);
     const env: ApiEnv = {
       NODE_ENV: 'test',
       API_HOST: '127.0.0.1',
       API_PORT: 4000,
-      DATABASE_URL: runtimeUrl!,
+      DATABASE_URL: runtimeUrl,
+      AUTH_DATABASE_URL: runtimeUrl,
       BETTER_AUTH_SECRET: 'test-secret-with-at-least-thirty-two-characters',
       BETTER_AUTH_URL: 'http://localhost:4000',
       WEB_ORIGIN: 'http://localhost:3000',
       DESKTOP_DEV_ORIGIN: 'http://localhost:5173',
+      DESKTOP_APP_ORIGIN: 'morubi-app://app',
       LOG_LEVEL: 'silent',
       TRUST_PROXY: false,
       INTELLIGENCE_ENABLED: true,
@@ -167,6 +179,7 @@ describe.skipIf(!adminUrl || !runtimeUrl)('critical tenant boundary', () => {
       LIVE_TRANSCRIPTION_ENABLED: false,
       LIVE_COPILOT_ENABLED: false,
       LIVE_GENERATION_ENABLED: false,
+      POST_CALL_INTELLIGENCE_ENABLED: false,
       LIVE_TRANSCRIPTION_COST_MICROS_PER_MINUTE: 0,
       AUDIO_STORAGE_ROOT: '.data/audio-test',
       AUDIO_MAX_BYTES: 20_971_520,

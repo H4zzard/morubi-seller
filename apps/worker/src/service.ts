@@ -1,5 +1,6 @@
 import {
   DeepSeekGenerativeProvider,
+  FixtureGenerativeProvider,
   FixtureTranscriptionProvider,
   GeminiTranscriptionProvider,
   type GenerativeProvider,
@@ -14,6 +15,8 @@ import {
   IntelligenceJobRepository,
   IntelligenceProcessor,
   LiveCallRepository,
+  PostCallJobRepository,
+  PostCallProcessor,
   TranscriptionJobRepository,
   TranscriptionProcessor,
   listWorkerQueues,
@@ -32,6 +35,7 @@ export interface WorkerLogger {
 
 export class MorubiWorkerService {
   private readonly generativeProvider: GenerativeProvider;
+  private readonly postCallProvider: GenerativeProvider;
   private readonly transcriptionProvider: TranscriptionProvider;
   private readonly audioStorage: LocalObjectStorage;
 
@@ -42,6 +46,7 @@ export class MorubiWorkerService {
     private readonly log: WorkerLogger
   ) {
     this.generativeProvider = this.createGenerativeProvider();
+    this.postCallProvider = this.createPostCallProvider();
     this.transcriptionProvider = this.createTranscriptionProvider();
     this.audioStorage = new LocalObjectStorage(this.env.AUDIO_STORAGE_ROOT);
   }
@@ -62,7 +67,8 @@ export class MorubiWorkerService {
           0
         ),
         intelligenceQueueDepth: queues.reduce((sum, item) => sum + item.intelligencePending, 0),
-        generationQueueDepth: queues.reduce((sum, item) => sum + item.generationPending, 0)
+        generationQueueDepth: queues.reduce((sum, item) => sum + item.generationPending, 0),
+        postCallQueueDepth: queues.reduce((sum, item) => sum + item.postCallPending, 0)
       },
       'Worker queue snapshot'
     );
@@ -91,6 +97,7 @@ export class MorubiWorkerService {
       while (remaining > 0 && (await this.processTranscription(context))) remaining -= 1;
       while (remaining > 0 && (await this.processIntelligence(context))) remaining -= 1;
       while (remaining > 0 && (await this.processGeneration(context))) remaining -= 1;
+      while (remaining > 0 && (await this.processPostCall(context))) remaining -= 1;
     }
   }
 
@@ -312,7 +319,8 @@ export class MorubiWorkerService {
     if (!this.env.GENERATIVE_AI_ENABLED || !this.env.DEEPSEEK_ENABLED)
       return {
         metadata: { provider: 'disabled', configVersion: 'disabled-v1' },
-        generate: () => Promise.reject(new Error('GENERATION_PROVIDER_DISABLED'))
+        generate: () => Promise.reject(new Error('GENERATION_PROVIDER_DISABLED')),
+        analyzePostCall: () => Promise.reject(new Error('POST_CALL_PROVIDER_DISABLED'))
       };
     return new DeepSeekGenerativeProvider({
       apiKey: this.env.DEEPSEEK_API_KEY!,
@@ -324,6 +332,74 @@ export class MorubiWorkerService {
       maxOutputTokens: this.env.DEEPSEEK_MAX_OUTPUT_TOKENS,
       configVersion: 'deepseek-config-v1'
     });
+  }
+
+  private createPostCallProvider(): GenerativeProvider {
+    if (this.env.POST_CALL_PROVIDER === 'fixture') return new FixtureGenerativeProvider();
+    if (!this.env.DEEPSEEK_ENABLED || !this.env.DEEPSEEK_API_KEY)
+      return {
+        metadata: { provider: 'disabled', configVersion: 'disabled-v1' },
+        generate: () => Promise.reject(new Error('GENERATION_PROVIDER_DISABLED')),
+        analyzePostCall: () => Promise.reject(new Error('POST_CALL_PROVIDER_DISABLED'))
+      };
+    return new DeepSeekGenerativeProvider({
+      apiKey: this.env.DEEPSEEK_API_KEY,
+      baseUrl: this.env.DEEPSEEK_BASE_URL,
+      fastModel: this.env.DEEPSEEK_FAST_MODEL,
+      reasoningModel: this.env.DEEPSEEK_REASONING_MODEL,
+      fastTimeoutMs: this.env.DEEPSEEK_FAST_TIMEOUT_MS,
+      reasoningTimeoutMs: this.env.DEEPSEEK_REASONING_TIMEOUT_MS,
+      maxOutputTokens: this.env.DEEPSEEK_MAX_OUTPUT_TOKENS,
+      configVersion: 'deepseek-post-call-config-v1'
+    });
+  }
+
+  private async processPostCall(context: ReturnType<typeof workerTenantContext>): Promise<boolean> {
+    if (!this.env.POST_CALL_INTELLIGENCE_ENABLED) return false;
+    const jobs = new PostCallJobRepository(this.database.db, context);
+    const job = await jobs.claimNext();
+    if (!job) return false;
+    const startedAt = performance.now();
+    try {
+      const result = await new PostCallProcessor(this.database.db, context, this.postCallProvider, {
+        enabled: true,
+        maxSegmentCharacters: this.env.POST_CALL_MAX_SEGMENT_CHARACTERS,
+        maxOutputCharacters: this.env.POST_CALL_MAX_OUTPUT_CHARACTERS,
+        pricing: {
+          inputMicrosPerMillionTokens: this.env.DEEPSEEK_INPUT_COST_MICROS_PER_MILLION_TOKENS,
+          outputMicrosPerMillionTokens: this.env.DEEPSEEK_OUTPUT_COST_MICROS_PER_MILLION_TOKENS
+        }
+      }).process(job);
+      await jobs.complete(job.id);
+      this.log.info(
+        {
+          jobType: 'POST_CALL_ANALYSIS',
+          organizationId: context.organizationId,
+          correlationId: job.correlationId,
+          jobId: job.id,
+          revisionId: result.revisionId,
+          version: result.version,
+          attempts: job.attempts,
+          processingLatencyMs: Math.round(performance.now() - startedAt)
+        },
+        'Worker job completed'
+      );
+    } catch (error) {
+      await jobs.fail(job, error);
+      this.log.error(
+        {
+          jobType: 'POST_CALL_ANALYSIS',
+          organizationId: context.organizationId,
+          correlationId: job.correlationId,
+          jobId: job.id,
+          attempts: job.attempts,
+          terminal: job.attempts >= job.maxAttempts,
+          errorCode: error instanceof Error ? error.name : 'UNKNOWN'
+        },
+        'Worker job failed'
+      );
+    }
+    return true;
   }
 
   private createTranscriptionProvider(): TranscriptionProvider {

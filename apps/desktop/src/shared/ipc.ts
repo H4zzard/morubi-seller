@@ -1,5 +1,7 @@
 import type {
   AudioBinaryDto,
+  CallReportDto,
+  CallTranscriptDto,
   ContactDetailDto,
   ContactSummaryDto,
   ConversationContextDto,
@@ -56,6 +58,9 @@ export const ipcChannels = {
   liveCallsHeartbeat: 'liveCalls:heartbeat',
   liveCallsSendTurn: 'liveCalls:sendTurn',
   liveCallsEnd: 'liveCalls:end',
+  liveCallsGetReport: 'liveCalls:getReport',
+  liveCallsRetryReport: 'liveCalls:retryReport',
+  liveCallsGetTranscript: 'liveCalls:getTranscript',
   liveCallsSimulate: 'liveCalls:simulate',
   liveCallsAuthorizeMicrophone: 'liveCalls:authorizeMicrophone',
   liveCallsSetCompactMode: 'liveCalls:setCompactMode'
@@ -106,6 +111,9 @@ export interface MorubiBridge {
     ): Promise<{ receivedAt: string; bufferAccepted: boolean }>;
     sendTurn(sessionId: string, input: LiveTranscriptTurnRequest): Promise<LiveCallTurnResultDto>;
     end(sessionId: string): Promise<LiveCallSessionDto>;
+    getReport(sessionId: string): Promise<CallReportDto>;
+    retryReport(sessionId: string): Promise<CallReportDto>;
+    getTranscript(sessionId: string): Promise<CallTranscriptDto>;
     simulate(input: DevLiveCallScenarioRequest): Promise<void>;
     authorizeMicrophone(): Promise<{ authorizedUntil: string }>;
     setCompactMode(input: { compact: boolean; alwaysOnTop: boolean }): Promise<void>;

@@ -16,10 +16,12 @@ export const apiEnvSchema = z
     API_HOST: z.string().default('127.0.0.1'),
     API_PORT: z.coerce.number().int().positive().default(4000),
     DATABASE_URL: z.url(),
+    AUTH_DATABASE_URL: z.url(),
     BETTER_AUTH_SECRET: z.string().min(32),
     BETTER_AUTH_URL: z.url(),
     WEB_ORIGIN: z.url(),
     DESKTOP_DEV_ORIGIN: z.url().default('http://localhost:5173'),
+    DESKTOP_APP_ORIGIN: z.string().min(1).default('morubi-app://app'),
     LOG_LEVEL: z
       .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'])
       .default('info'),
@@ -44,6 +46,7 @@ export const apiEnvSchema = z
     LIVE_TRANSCRIPTION_ENABLED: booleanFromString,
     LIVE_COPILOT_ENABLED: booleanFromString,
     LIVE_GENERATION_ENABLED: booleanFromString,
+    POST_CALL_INTELLIGENCE_ENABLED: booleanFromString,
     LIVE_TRANSCRIPTION_COST_MICROS_PER_MINUTE: z.coerce
       .number()
       .int()
@@ -66,6 +69,8 @@ export const webEnvSchema = z.object({
 
 export const desktopEnvSchema = z.object({
   MORUBI_API_URL: z.url().default('http://localhost:4000'),
+  MORUBI_DESKTOP_ORIGIN: z.string().min(1).optional(),
+  MORUBI_USER_DATA_DIR: z.string().min(1).optional(),
   MORUBI_LIVE_CAPTURE_ENABLED: booleanFromString
 });
 
@@ -124,6 +129,10 @@ export const workerEnvSchema = z
     LIVE_TRANSCRIPTION_ENABLED: booleanFromString,
     LIVE_COPILOT_ENABLED: booleanFromString,
     LIVE_GENERATION_ENABLED: booleanFromString,
+    POST_CALL_INTELLIGENCE_ENABLED: booleanFromString,
+    POST_CALL_PROVIDER: z.enum(['fixture', 'deepseek']).default('fixture'),
+    POST_CALL_MAX_SEGMENT_CHARACTERS: z.coerce.number().int().min(1000).max(50000).default(12000),
+    POST_CALL_MAX_OUTPUT_CHARACTERS: z.coerce.number().int().min(1000).max(50000).default(16000),
     WORKER_POLL_INTERVAL_MS: z.coerce.number().int().min(100).max(60_000).default(500),
     WORKER_BATCH_SIZE: z.coerce.number().int().min(1).max(100).default(25)
   })
@@ -133,6 +142,17 @@ export const workerEnvSchema = z
         code: 'custom',
         path: ['DEEPSEEK_API_KEY'],
         message: 'DEEPSEEK_API_KEY is required when DeepSeek generation is enabled.'
+      });
+    }
+    if (
+      value.POST_CALL_INTELLIGENCE_ENABLED &&
+      value.POST_CALL_PROVIDER === 'deepseek' &&
+      (!value.DEEPSEEK_ENABLED || !value.DEEPSEEK_API_KEY)
+    ) {
+      context.addIssue({
+        code: 'custom',
+        path: ['POST_CALL_PROVIDER'],
+        message: 'DeepSeek and its API key are required for the deepseek post-call provider.'
       });
     }
     if (

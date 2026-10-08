@@ -33,6 +33,10 @@ As migrations `0001_stale_rocket_raccoon.sql` e `0002_clumsy_captain_flint.sql` 
 
 Todas essas tabelas têm RLS habilitado e forçado para `morubi_app`. `source_records` e `commercial_events` permitem somente `SELECT/INSERT` ao papel de runtime. Relações internas relevantes usam `(organization_id, id)`. Busca textual usa `pg_trgm`; paginação usa cursor estável `(timestamp, id)`.
 
+### Fronteira de autenticação
+
+`users`, `accounts`, `sessions` e `verifications` pertencem à fronteira Better Auth. A migration `0010_auth_rls.sql` revoga acesso de `PUBLIC` e `morubi_app`, habilita e força RLS e cria uma policy por tabela restrita a `morubi_auth`. Essa role tem somente CRUD nessas quatro tabelas. O pool de domínio não lê `users`; o módulo auth fornece uma projeção explícita de identidade para os poucos fluxos de membership que a exigem.
+
 Arquivamento retira a projeção dos read models; deleção vinda do provider usa tombstone. Retenção e anonimização física continuam dependentes da política LGPD. Payload bruto tem acesso apenas no data layer e deverá receber prazo de retenção antes de produção.
 
 ## 2. Estratégia de tenant
@@ -515,3 +519,12 @@ A migration `0007_happy_odin.sql` adiciona `audio_assets`, `audio_transcripts` e
 A migration `0008_freezing_the_call.sql` adiciona `live_call_sessions`, `call_consent_records`, `live_transcript_turns` e `call_usage`. Sessão guarda lifecycle, seller, contexto, provider, fase, memória e heartbeat; consentimento guarda ator/política/fontes; turns guardam partial/final, speaker, sequência e provenance; usage agrega duração, unidades, drops, decisões, gerações, cards e custo.
 
 `commercial_events`, `ai_usage`, `intervention_deliveries` e `realtime_events` recebem IDs live. `intelligence_jobs` recebe prioridade, source e deadline. Settings ganham seis gates e limites/retenções live. As quatro tabelas têm FKs tenant-consistentes, índices/uniques de sessão e idempotência, grants e RLS `ENABLE + FORCE`.
+
+# Fase 9
+
+- `post_call_jobs`: fila idempotente por `(organization_id, live_call_session_id, processing_version)`.
+- `call_reports`: estado estável por sessão.
+- `call_report_revisions`: conteúdo/evidência/propostas e metadados imutáveis, com uma revisão parcial `CURRENT`.
+- `ai_usage.call_report_revision_id`: vínculo de custo e uso pós-call; `deal_id`/`commercial_event_id` são opcionais para calls sem esses vínculos.
+
+Migration: `0009_foamy_warhawk.sql`. As tabelas têm grants explícitos para `morubi_app`, RLS habilitada e forçada e policies por `app.current_organization_id`.

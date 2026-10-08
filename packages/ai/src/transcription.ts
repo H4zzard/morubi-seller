@@ -153,7 +153,7 @@ export class FixtureTranscriptionProvider implements TranscriptionProvider {
       text:
         this.mode === 'EMPTY'
           ? ''
-          : marker || 'Preciso entender melhor prazo, valor e prÃ³ximos passos.',
+          : marker || 'Preciso entender melhor prazo, valor e próximos passos.',
       language: this.mode === 'WRONG_LANGUAGE' ? 'und' : 'pt-BR',
       confidence: 0.99,
       model: 'fixture-v1',
