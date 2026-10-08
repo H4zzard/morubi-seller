@@ -72,15 +72,30 @@ function fixturePostCallOutput(input: PostCallAnalysisInput): PostCallReportCont
   const objections = mapped(/\b(caro|pre[cç]o|n[aã]o consigo|obje[cç]|contrato|risco)\b/i);
   const pains = mapped(/\b(problema|dor|retrabalho|demora|perdendo|dificuldade|manual)\b/i);
   const buyingSignals = mapped(/\b(gostei|faz sentido|queremos|avan[cç]ar|proposta|contratar)\b/i);
+  const sellerTurns = turns.filter((turn) => turn.speakerRole === 'SELLER');
+  const actionItems = explicit.map((item) => ({
+    description: item.value,
+    ownerRole: null,
+    ownerName: null,
+    dueAt: null,
+    source: 'EXPLICIT' as const,
+    confidence: item.confidence,
+    status: 'OPEN' as const,
+    evidenceTurnIds: item.evidenceTurnIds
+  }));
   return {
     executiveSummary: evidence(
       `A call abordou ${turns.length} turno${turns.length === 1 ? '' : 's'} de conversa comercial.`,
       first
     ),
     context: [evidence(first.text, first)],
+    participants: [],
+    durationSeconds: 0,
+    topics: [evidence(first.text, first)],
     pains,
     needs: mapped(/\b(precisamos|necessidade|queremos|objetivo)\b/i),
     objections,
+    sellerResponses: sellerTurns.slice(0, 5).map((turn) => evidence(turn.text, turn)),
     buyingSignals,
     decisionMakers: mapped(/\b(decisor|diretor|gerente|aprova|comit[eê])\b/i),
     competitors: mapped(/\b(concorrente|competidor|hubspot|salesforce|pipedrive)\b/i),
@@ -98,10 +113,36 @@ function fixturePostCallOutput(input: PostCallAnalysisInput): PostCallReportCont
           )
         ]
       : [],
+    followUps: explicit,
+    actionItems,
     unansweredQuestions: [],
     risks: objections,
     gaps: [],
     playbookObservations: [],
+    sellerPerformance: sellerTurns.length
+      ? [{
+          dimension: 'CLARITY',
+          rating: 'ADEQUATE',
+          score: null,
+          confidence: 0.7,
+          rationale: 'A fala do vendedor foi registrada de forma compreensível.',
+          evidenceTurnIds: [sellerTurns[0]!.id]
+        }]
+      : [],
+    dealAssessment: {
+      currentStage: null,
+      stageConfidence: 0.5,
+      purchaseIntent: buyingSignals.length ? 'HIGH' : 'UNKNOWN',
+      closeProbabilityBucket: buyingSignals.length ? 'HIGH' : 'UNKNOWN',
+      blockers: objections,
+      positiveSignals: buyingSignals,
+      recommendedNextAction: explicit[0] ?? null,
+      evidenceTurnIds: [
+        buyingSignals[0]?.evidenceTurnIds[0] ??
+          objections[0]?.evidenceTurnIds[0] ??
+          first.id
+      ]
+    },
     assessment: {
       outcome: buyingSignals.length ? 'POSITIVE' : objections.length ? 'NEGATIVE' : 'INCONCLUSIVE',
       confidence: 0.8,
@@ -110,7 +151,8 @@ function fixturePostCallOutput(input: PostCallAnalysisInput): PostCallReportCont
         : 'Não há evidência suficiente para concluir avanço.',
       evidenceTurnIds: [buyingSignals[0]?.evidenceTurnIds[0] ?? first.id],
       experimentalScore: buyingSignals.length ? 75 : null
-    }
+    },
+    evidence: []
   };
 }
 

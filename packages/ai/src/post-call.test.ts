@@ -6,6 +6,7 @@ const input: PostCallAnalysisInput = {
   profile: 'POST_CALL_ANALYSIS',
   phase: 'EXTRACT',
   processingVersion: 'post-call-v1',
+  transcriptVersion: 'transcript-v1-fixture-1',
   sessionId: '00000000-0000-4000-8000-000000000010',
   segmentIndex: 0,
   segmentCount: 1,
@@ -19,6 +20,9 @@ const input: PostCallAnalysisInput = {
     }
   ],
   partialReports: [],
+  callMetadata: {},
+  companyContext: {},
+  playbookContext: [],
   dealState: {},
   liveMemory: {},
   constraints: { maxInputCharacters: 12_000, maxOutputCharacters: 16_000 }

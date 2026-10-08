@@ -25,4 +25,8 @@ export class GenerativeRouter {
       ? 'DEEP_REASONING'
       : 'FAST_GENERATION';
   }
+
+  public routePostCall(): 'POST_CALL_ANALYSIS' {
+    return 'POST_CALL_ANALYSIS';
+  }
 }

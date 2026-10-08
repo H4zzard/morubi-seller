@@ -290,7 +290,12 @@ export const postCallJobStatus = pgEnum('post_call_job_status', [
   'RETRY',
   'CANCELLED'
 ]);
-export const callReportStatus = pgEnum('call_report_status', ['PROCESSING', 'READY', 'FAILED']);
+export const callReportStatus = pgEnum('call_report_status', [
+  'PROCESSING',
+  'READY',
+  'FAILED',
+  'STALE'
+]);
 export const callReportRevisionStatus = pgEnum('call_report_revision_status', [
   'CURRENT',
   'SUPERSEDED',
@@ -1101,6 +1106,7 @@ export const postCallJobs = pgTable(
       .notNull()
       .references(() => organizations.id, { onDelete: 'cascade' }),
     liveCallSessionId: uuid('live_call_session_id').notNull(),
+    transcriptVersion: text('transcript_version').notNull(),
     processingVersion: text('processing_version').notNull(),
     status: postCallJobStatus('status').default('PENDING').notNull(),
     attempts: integer('attempts').default(0).notNull(),
@@ -1118,6 +1124,7 @@ export const postCallJobs = pgTable(
     uniqueIndex('post_call_jobs_processing_uidx').on(
       table.organizationId,
       table.liveCallSessionId,
+      table.transcriptVersion,
       table.processingVersion
     ),
     foreignKey({
@@ -1147,6 +1154,7 @@ export const callReports = pgTable(
       .references(() => organizations.id, { onDelete: 'cascade' }),
     liveCallSessionId: uuid('live_call_session_id').notNull(),
     status: callReportStatus('status').default('PROCESSING').notNull(),
+    transcriptVersion: text('transcript_version').notNull(),
     processingVersion: text('processing_version').notNull(),
     failureCode: text('failure_code'),
     readyAt: timestamp('ready_at', { withTimezone: true }),
@@ -1173,6 +1181,7 @@ export const callReportRevisions = pgTable(
       .references(() => organizations.id, { onDelete: 'cascade' }),
     callReportId: uuid('call_report_id').notNull(),
     liveCallSessionId: uuid('live_call_session_id').notNull(),
+    transcriptVersion: text('transcript_version').notNull(),
     version: integer('version').notNull(),
     status: callReportRevisionStatus('status').default('CURRENT').notNull(),
     processingVersion: text('processing_version').notNull(),
@@ -1192,6 +1201,17 @@ export const callReportRevisions = pgTable(
       .default(sql`0`)
       .notNull(),
     evidenceCount: integer('evidence_count').default(0).notNull(),
+    summary: text('summary').notNull(),
+    outcome: text('outcome').notNull(),
+    confidence: real('confidence').notNull(),
+    durationSeconds: integer('duration_seconds').default(0).notNull(),
+    participantCount: integer('participant_count').default(0).notNull(),
+    topicCount: integer('topic_count').default(0).notNull(),
+    objectionCount: integer('objection_count').default(0).notNull(),
+    actionItemCount: integer('action_item_count').default(0).notNull(),
+    sellerScoreAverage: real('seller_score_average'),
+    dealStage: text('deal_stage'),
+    purchaseIntent: text('purchase_intent').notNull(),
     generatedAt: timestamp('generated_at', { withTimezone: true }).defaultNow().notNull(),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull()
   },
@@ -1205,6 +1225,12 @@ export const callReportRevisions = pgTable(
     uniqueIndex('call_report_revisions_current_uidx')
       .on(table.organizationId, table.callReportId)
       .where(sql`${table.status} = 'CURRENT'`),
+    index('call_report_revisions_analytics_idx').on(
+      table.organizationId,
+      table.outcome,
+      table.purchaseIntent,
+      table.generatedAt
+    ),
     foreignKey({
       columns: [table.organizationId, table.callReportId],
       foreignColumns: [callReports.organizationId, callReports.id],
@@ -1217,8 +1243,74 @@ export const callReportRevisions = pgTable(
     }).onDelete('cascade'),
     check(
       'call_report_revisions_values_check',
-      sql`${table.version} > 0 and ${table.inputTokens} >= 0 and ${table.outputTokens} >= 0 and ${table.estimatedCostMicros} >= 0 and ${table.evidenceCount} > 0 and ${table.profile} = 'POST_CALL_ANALYSIS'`
+      sql`${table.version} > 0 and ${table.inputTokens} >= 0 and ${table.outputTokens} >= 0 and ${table.estimatedCostMicros} >= 0 and ${table.evidenceCount} > 0 and ${table.durationSeconds} >= 0 and ${table.participantCount} >= 0 and ${table.topicCount} >= 0 and ${table.objectionCount} >= 0 and ${table.actionItemCount} >= 0 and ${table.confidence} between 0 and 1 and ${table.profile} = 'POST_CALL_ANALYSIS'`
     )
+  ]
+);
+
+export const callReportEvidence = pgTable(
+  'call_report_evidence',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    organizationId: uuid('organization_id').notNull().references(() => organizations.id, { onDelete: 'cascade' }),
+    callReportRevisionId: uuid('call_report_revision_id').notNull(),
+    liveTranscriptTurnId: uuid('live_transcript_turn_id').notNull(),
+    timestamp: timestamp('timestamp', { withTimezone: true }).notNull(),
+    speakerRole: text('speaker_role').notNull(),
+    participantRole: text('participant_role').notNull(),
+    excerpt: text('excerpt').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull()
+  },
+  (table) => [
+    uniqueIndex('call_report_evidence_turn_uidx').on(table.organizationId, table.callReportRevisionId, table.liveTranscriptTurnId),
+    foreignKey({ columns: [table.organizationId, table.callReportRevisionId], foreignColumns: [callReportRevisions.organizationId, callReportRevisions.id], name: 'call_report_evidence_organization_revision_fk' }).onDelete('cascade'),
+    foreignKey({ columns: [table.organizationId, table.liveTranscriptTurnId], foreignColumns: [liveTranscriptTurns.organizationId, liveTranscriptTurns.id], name: 'call_report_evidence_organization_turn_fk' }).onDelete('cascade'),
+    index('call_report_evidence_revision_idx').on(table.organizationId, table.callReportRevisionId)
+  ]
+);
+
+export const callReportActionItems = pgTable(
+  'call_report_action_items',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    organizationId: uuid('organization_id').notNull().references(() => organizations.id, { onDelete: 'cascade' }),
+    callReportRevisionId: uuid('call_report_revision_id').notNull(),
+    description: text('description').notNull(),
+    ownerRole: text('owner_role'),
+    ownerName: text('owner_name'),
+    dueAt: timestamp('due_at', { withTimezone: true }),
+    source: text('source').notNull(),
+    confidence: real('confidence').notNull(),
+    status: text('status').default('OPEN').notNull(),
+    evidenceTurnIds: uuid('evidence_turn_ids').array().notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull()
+  },
+  (table) => [
+    foreignKey({ columns: [table.organizationId, table.callReportRevisionId], foreignColumns: [callReportRevisions.organizationId, callReportRevisions.id], name: 'call_report_action_items_organization_revision_fk' }).onDelete('cascade'),
+    index('call_report_action_items_revision_idx').on(table.organizationId, table.callReportRevisionId),
+    check('call_report_action_items_values_check', sql`${table.confidence} between 0 and 1 and ${table.source} in ('EXPLICIT', 'IMPLICIT') and ${table.status} = 'OPEN'`)
+  ]
+);
+
+export const callReportSellerPerformance = pgTable(
+  'call_report_seller_performance',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    organizationId: uuid('organization_id').notNull().references(() => organizations.id, { onDelete: 'cascade' }),
+    callReportRevisionId: uuid('call_report_revision_id').notNull(),
+    dimension: text('dimension').notNull(),
+    rating: text('rating').notNull(),
+    score: real('score'),
+    confidence: real('confidence').notNull(),
+    rationale: text('rationale').notNull(),
+    evidenceTurnIds: uuid('evidence_turn_ids').array().notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull()
+  },
+  (table) => [
+    uniqueIndex('call_report_seller_performance_dimension_uidx').on(table.organizationId, table.callReportRevisionId, table.dimension),
+    foreignKey({ columns: [table.organizationId, table.callReportRevisionId], foreignColumns: [callReportRevisions.organizationId, callReportRevisions.id], name: 'call_report_seller_performance_organization_revision_fk' }).onDelete('cascade'),
+    index('call_report_seller_performance_analytics_idx').on(table.organizationId, table.dimension, table.rating, table.createdAt),
+    check('call_report_seller_performance_values_check', sql`${table.confidence} between 0 and 1 and (${table.score} is null or ${table.score} between 0 and 100)`)
   ]
 );
 

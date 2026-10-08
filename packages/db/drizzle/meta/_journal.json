@@ -78,6 +78,13 @@
       "when": 1791480000000,
       "tag": "0010_auth_rls",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1791490000000,
+      "tag": "0011_post_call_canonical",
+      "breakpoints": true
     }
   ]
 }

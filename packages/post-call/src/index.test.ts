@@ -32,6 +32,16 @@ function report() {
     risks: [],
     gaps: [],
     playbookObservations: [],
+    dealAssessment: {
+      currentStage: null,
+      stageConfidence: 0.5,
+      purchaseIntent: 'UNKNOWN',
+      closeProbabilityBucket: 'UNKNOWN',
+      blockers: [],
+      positiveSignals: [],
+      recommendedNextAction: null,
+      evidenceTurnIds: [id1]
+    },
     assessment: {
       outcome: 'POSITIVE',
       confidence: 0.8,
@@ -90,6 +100,7 @@ describe('post-call intelligence core', () => {
     secondCandidate.executiveSummary = evidence('Segundo bloco', [id2]);
     secondCandidate.pains = [evidence('Atraso', [id2])];
     secondCandidate.assessment.evidenceTurnIds = [id2];
+    secondCandidate.dealAssessment.evidenceTurnIds = [id2];
     const second = reconcilePostCallReport(secondCandidate, new Set([id2]));
     const merged = reconcilePostCallReport(
       mergePostCallReports([first, second]),

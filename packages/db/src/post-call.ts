@@ -1,26 +1,33 @@
 import { and, asc, desc, eq, lt, or, sql } from 'drizzle-orm';
 import type { CallReportDto, CallTranscriptDto } from '@morubi/contracts';
-import type { GenerativeProvider, ProviderPricing } from '@morubi/ai';
+import { GenerativeRouter, type GenerativeProvider, type ProviderPricing } from '@morubi/ai';
 import type { TenantContext } from '@morubi/domain';
 import { errors } from '@morubi/domain';
 import {
   POST_CALL_PROCESSING_VERSION,
   POST_CALL_PROMPT_VERSION,
   buildSafeProposals,
+  buildTranscriptVersion,
   reconcilePostCallReport,
   segmentTranscript,
+  type PostCallAnalysisInput,
   type PostCallReportContent,
   type PostCallTurn
 } from '@morubi/post-call';
 import type { MorubiDatabase } from './database.js';
 import {
   aiUsage,
+  callReportActionItems,
+  callReportEvidence,
   callReportRevisions,
+  callReportSellerPerformance,
   callReports,
   dealStates,
   liveCallSessions,
   liveTranscriptTurns,
   memoryFacts,
+  organizations,
+  intelligenceSettings,
   postCallJobs,
   realtimeEvents
 } from './schema.js';
@@ -50,6 +57,7 @@ function reportDto(
     id: report.id,
     liveCallSessionId: report.liveCallSessionId,
     status: report.status,
+    transcriptVersion: report.transcriptVersion,
     processingVersion: report.processingVersion,
     failureCode: report.failureCode,
     currentRevision: revision
@@ -58,6 +66,8 @@ function reportDto(
           version: revision.version,
           status: revision.status,
           processingVersion: revision.processingVersion,
+          transcriptVersion: revision.transcriptVersion,
+          generationVersion: revision.processingVersion,
           provider: revision.provider,
           model: revision.model,
           content: revision.content,
@@ -85,11 +95,32 @@ export async function enqueuePostCallInTransaction(
   }
 ): Promise<void> {
   const now = new Date();
+  const finalTurns = await tx
+    .select()
+    .from(liveTranscriptTurns)
+    .where(
+      and(
+        eq(liveTranscriptTurns.organizationId, input.organizationId),
+        eq(liveTranscriptTurns.liveCallSessionId, input.sessionId),
+        eq(liveTranscriptTurns.isFinal, true)
+      )
+    )
+    .orderBy(asc(liveTranscriptTurns.sequence));
+  const transcriptVersion = buildTranscriptVersion(
+    finalTurns.map((turn) => ({
+      id: turn.id,
+      sequence: turn.sequence,
+      speakerRole: turn.speakerRole,
+      text: turn.text,
+      startedAt: turn.startedAt.toISOString()
+    }))
+  );
   await tx
     .insert(callReports)
     .values({
       organizationId: input.organizationId,
       liveCallSessionId: input.sessionId,
+      transcriptVersion,
       status: 'PROCESSING',
       processingVersion: POST_CALL_PROCESSING_VERSION
     })
@@ -97,6 +128,7 @@ export async function enqueuePostCallInTransaction(
       target: [callReports.organizationId, callReports.liveCallSessionId],
       set: {
         status: 'PROCESSING',
+        transcriptVersion,
         processingVersion: POST_CALL_PROCESSING_VERSION,
         failureCode: null,
         updatedAt: now
@@ -107,6 +139,7 @@ export async function enqueuePostCallInTransaction(
     .values({
       organizationId: input.organizationId,
       liveCallSessionId: input.sessionId,
+      transcriptVersion,
       processingVersion: POST_CALL_PROCESSING_VERSION,
       correlationId: input.correlationId,
       priority: 10
@@ -181,8 +214,29 @@ export class PostCallJobRepository {
   }
 
   public async fail(job: PostCallJob, error: unknown): Promise<void> {
-    const terminal = job.attempts >= job.maxAttempts;
     const errorCode = safeErrorCode(error);
+    if (errorCode === 'POST_CALL_TRANSCRIPT_STALE') {
+      await this.finish(job.id, {
+        status: 'CANCELLED',
+        lockedAt: null,
+        finishedAt: new Date(),
+        errorCode
+      });
+      await this.db.transaction(async (tx) => {
+        await setTenantContext(tx, this.context);
+        await tx
+          .update(callReports)
+          .set({ status: 'STALE', failureCode: null, updatedAt: new Date() })
+          .where(
+            and(
+              eq(callReports.organizationId, this.context.organizationId),
+              eq(callReports.liveCallSessionId, job.liveCallSessionId)
+            )
+          );
+      });
+      return;
+    }
+    const terminal = job.attempts >= job.maxAttempts;
     await this.finish(job.id, {
       status: terminal ? 'FAILED' : 'RETRY',
       availableAt: new Date(Date.now() + Math.min(120_000, 2_000 * 2 ** job.attempts)),
@@ -378,6 +432,26 @@ export class PostCallReadRepository {
     if (!session || session.status !== 'ENDED') throw errors.notFound();
     await this.db.transaction(async (tx) => {
       await setTenantContext(tx, this.context);
+      const transcriptTurns = await tx
+        .select()
+        .from(liveTranscriptTurns)
+        .where(
+          and(
+            eq(liveTranscriptTurns.organizationId, this.context.organizationId),
+            eq(liveTranscriptTurns.liveCallSessionId, sessionId),
+            eq(liveTranscriptTurns.isFinal, true)
+          )
+        )
+        .orderBy(asc(liveTranscriptTurns.sequence));
+      const transcriptVersion = buildTranscriptVersion(
+        transcriptTurns.map((turn) => ({
+          id: turn.id,
+          sequence: turn.sequence,
+          speakerRole: turn.speakerRole,
+          text: turn.text,
+          startedAt: turn.startedAt.toISOString()
+        }))
+      );
       const [job] = await tx
         .select()
         .from(postCallJobs)
@@ -385,6 +459,7 @@ export class PostCallReadRepository {
           and(
             eq(postCallJobs.organizationId, this.context.organizationId),
             eq(postCallJobs.liveCallSessionId, sessionId),
+            eq(postCallJobs.transcriptVersion, transcriptVersion),
             eq(postCallJobs.processingVersion, POST_CALL_PROCESSING_VERSION)
           )
         )
@@ -417,7 +492,12 @@ export class PostCallReadRepository {
         .where(eq(postCallJobs.id, job.id));
       await tx
         .update(callReports)
-        .set({ status: 'PROCESSING', failureCode: null, updatedAt: new Date() })
+        .set({
+          status: 'PROCESSING',
+          transcriptVersion,
+          failureCode: null,
+          updatedAt: new Date()
+        })
         .where(
           and(
             eq(callReports.organizationId, this.context.organizationId),
@@ -434,6 +514,7 @@ export interface PostCallProcessorConfig {
   maxSegmentCharacters: number;
   maxOutputCharacters: number;
   pricing: ProviderPricing;
+  maxValidationRetries?: number;
 }
 
 export class PostCallProcessor {
@@ -441,7 +522,8 @@ export class PostCallProcessor {
     private readonly db: MorubiDatabase,
     private readonly context: TenantContext,
     private readonly provider: GenerativeProvider,
-    private readonly config: PostCallProcessorConfig
+    private readonly config: PostCallProcessorConfig,
+    private readonly router = new GenerativeRouter()
   ) {}
 
   public async process(
@@ -452,61 +534,77 @@ export class PostCallProcessor {
     if (!loaded || loaded.session.status !== 'ENDED')
       throw new Error('POST_CALL_SESSION_NOT_ENDED');
     if (!loaded.turns.length) throw new Error('POST_CALL_EMPTY_TRANSCRIPT');
+    if (loaded.transcriptVersion !== job.transcriptVersion)
+      throw new Error('POST_CALL_TRANSCRIPT_STALE');
     const segments = segmentTranscript(loaded.turns, this.config.maxSegmentCharacters);
     let inputTokens = 0;
     let outputTokens = 0;
     let model = 'unknown';
     const partials: PostCallReportContent[] = [];
     for (const segment of segments) {
-      const generated = await this.provider.analyzePostCall({
-        profile: 'POST_CALL_ANALYSIS',
+      const generated = await this.analyzeValidated({
+        profile: this.router.routePostCall(),
         phase: 'EXTRACT',
         processingVersion: job.processingVersion,
+        transcriptVersion: job.transcriptVersion,
         sessionId: loaded.session.id,
         segmentIndex: segment.index,
         segmentCount: segments.length,
         turns: segment.turns,
         partialReports: [],
+        callMetadata: loaded.callMetadata,
+        companyContext: loaded.companyContext,
+        playbookContext: loaded.playbookContext,
         dealState: loaded.dealState,
         liveMemory: { ...loaded.session.memory },
         constraints: {
           maxInputCharacters: this.config.maxSegmentCharacters,
           maxOutputCharacters: this.config.maxOutputCharacters
         }
-      });
+      }, new Set(segment.turns.map((turn) => turn.id)));
       inputTokens += generated.inputTokens;
       outputTokens += generated.outputTokens;
       model = generated.model;
       partials.push(
-        reconcilePostCallReport(generated.output, new Set(segment.turns.map((turn) => turn.id)))
+        generated.content
       );
     }
     let content = partials[0]!;
     if (partials.length > 1) {
-      const merged = await this.provider.analyzePostCall({
-        profile: 'POST_CALL_ANALYSIS',
+      const merged = await this.analyzeValidated({
+        profile: this.router.routePostCall(),
         phase: 'MERGE',
         processingVersion: job.processingVersion,
+        transcriptVersion: job.transcriptVersion,
         sessionId: loaded.session.id,
         segmentIndex: segments.length,
         segmentCount: segments.length,
         turns: [],
         partialReports: partials,
+        callMetadata: loaded.callMetadata,
+        companyContext: loaded.companyContext,
+        playbookContext: loaded.playbookContext,
         dealState: loaded.dealState,
         liveMemory: { ...loaded.session.memory },
         constraints: {
           maxInputCharacters: this.config.maxSegmentCharacters,
           maxOutputCharacters: this.config.maxOutputCharacters
         }
-      });
+      }, new Set(loaded.turns.map((turn) => turn.id)));
       inputTokens += merged.inputTokens;
       outputTokens += merged.outputTokens;
       model = merged.model;
-      content = reconcilePostCallReport(
-        merged.output,
-        new Set(loaded.turns.map((turn) => turn.id))
-      );
+      content = merged.content;
     }
+    content = reconcilePostCallReport(
+      content,
+      new Map(loaded.turns.map((turn) => [turn.id, turn])),
+      {
+        transcriptVersion: job.transcriptVersion,
+        generationVersion: job.processingVersion,
+        durationSeconds: loaded.durationSeconds
+      }
+    );
     const proposals = buildSafeProposals(content, loaded.existingValues);
     const estimatedCostMicros =
       (BigInt(inputTokens) * this.config.pricing.inputMicrosPerMillionTokens +
@@ -519,6 +617,66 @@ export class PostCallProcessor {
       estimatedCostMicros,
       latencyMs: Math.max(0, Date.now() - job.lockedAt!.getTime())
     });
+  }
+
+  public async recordFailure(job: PostCallJob, error: unknown, latencyMs: number): Promise<void> {
+    const loaded = await this.load(job.liveCallSessionId);
+    if (!loaded) return;
+    await this.db.transaction(async (tx) => {
+      await setTenantContext(tx, this.context);
+      await tx.insert(aiUsage).values({
+        organizationId: this.context.organizationId,
+        liveCallSessionId: loaded.session.id,
+        dealId: loaded.session.dealId,
+        sellerMembershipId: loaded.session.sellerMembershipId,
+        conversationId: loaded.session.conversationId,
+        provider: this.provider.metadata.provider,
+        model: 'unknown',
+        profile: this.router.routePostCall(),
+        purpose: 'POST_CALL_ANALYSIS',
+        success: false,
+        retryCount: Math.max(0, job.attempts - 1),
+        inputSize: loaded.turns.reduce((sum, turn) => sum + turn.text.length, 0),
+        outputSize: 0,
+        inputTokens: 0,
+        outputTokens: 0,
+        latencyMs: Math.max(0, Math.round(latencyMs)),
+        estimatedCostMicros: 0n,
+        errorCode: safeErrorCode(error)
+      });
+    });
+  }
+
+  private async analyzeValidated(
+    initialInput: PostCallAnalysisInput,
+    validTurnIds: ReadonlySet<string>
+  ): Promise<{
+    content: PostCallReportContent;
+    model: string;
+    inputTokens: number;
+    outputTokens: number;
+  }> {
+    let input = initialInput;
+    let inputTokens = 0;
+    let outputTokens = 0;
+    let lastError: unknown;
+    for (let attempt = 0; attempt <= (this.config.maxValidationRetries ?? 1); attempt += 1) {
+      const generated = await this.provider.analyzePostCall(input);
+      inputTokens += generated.inputTokens;
+      outputTokens += generated.outputTokens;
+      try {
+        return {
+          content: reconcilePostCallReport(generated.output, validTurnIds),
+          model: generated.model,
+          inputTokens,
+          outputTokens
+        };
+      } catch (error) {
+        lastError = error;
+        input = { ...input, correction: ['Output rejected by canonical schema or evidence validation.'] };
+      }
+    }
+    throw lastError instanceof Error ? lastError : new Error('POST_CALL_INVALID_OUTPUT');
   }
 
   private async load(sessionId: string) {
@@ -535,6 +693,18 @@ export class PostCallProcessor {
         )
         .limit(1);
       if (!session) return null;
+      const [[organization], [settings]] = await Promise.all([
+        tx
+          .select({ id: organizations.id, name: organizations.name })
+          .from(organizations)
+          .where(eq(organizations.id, this.context.organizationId))
+          .limit(1),
+        tx
+          .select({ companyRules: intelligenceSettings.companyRules })
+          .from(intelligenceSettings)
+          .where(eq(intelligenceSettings.organizationId, this.context.organizationId))
+          .limit(1)
+      ]);
       const turns = await tx
         .select()
         .from(liveTranscriptTurns)
@@ -584,17 +754,35 @@ export class PostCallProcessor {
           existingValues.add(
             `${field}:${value.trim().toLocaleLowerCase('pt-BR').replace(/\s+/g, ' ')}`
           );
+      const mappedTurns = turns.map((turn): PostCallTurn => ({
+        id: turn.id,
+        sequence: turn.sequence,
+        speakerRole: turn.speakerRole,
+        text: turn.text,
+        startedAt: turn.startedAt.toISOString()
+      }));
       return {
         session,
+        transcriptVersion: buildTranscriptVersion(mappedTurns),
+        durationSeconds:
+          session.startedAt && session.endedAt
+            ? Math.max(0, Math.round((session.endedAt.getTime() - session.startedAt.getTime()) / 1_000))
+            : 0,
+        callMetadata: {
+          liveCallSessionId: session.id,
+          provider: session.provider,
+          title: session.meetingTitle,
+          startedAt: session.startedAt?.toISOString() ?? null,
+          endedAt: session.endedAt?.toISOString() ?? null,
+          dealId: session.dealId,
+          contactId: session.contactId,
+          conversationId: session.conversationId
+        },
+        companyContext: organization ? { organizationId: organization.id, name: organization.name } : {},
+        playbookContext: settings?.companyRules ?? [],
         dealState: state?.snapshot ?? {},
         existingValues,
-        turns: turns.map((turn): PostCallTurn => ({
-          id: turn.id,
-          sequence: turn.sequence,
-          speakerRole: turn.speakerRole,
-          text: turn.text,
-          startedAt: turn.startedAt.toISOString()
-        }))
+        turns: mappedTurns
       };
     });
   }
@@ -617,6 +805,28 @@ export class PostCallProcessor {
       await tx.execute(
         sql`select pg_advisory_xact_lock(hashtext(${this.context.organizationId}), hashtext(${loaded.session.id}))`
       );
+      const currentTurns = await tx
+        .select()
+        .from(liveTranscriptTurns)
+        .where(
+          and(
+            eq(liveTranscriptTurns.organizationId, this.context.organizationId),
+            eq(liveTranscriptTurns.liveCallSessionId, loaded.session.id),
+            eq(liveTranscriptTurns.isFinal, true)
+          )
+        )
+        .orderBy(asc(liveTranscriptTurns.sequence));
+      const currentTranscriptVersion = buildTranscriptVersion(
+        currentTurns.map((turn) => ({
+          id: turn.id,
+          sequence: turn.sequence,
+          speakerRole: turn.speakerRole,
+          text: turn.text,
+          startedAt: turn.startedAt.toISOString()
+        }))
+      );
+      if (currentTranscriptVersion !== job.transcriptVersion)
+        throw new Error('POST_CALL_TRANSCRIPT_STALE');
       const [report] = await tx
         .select()
         .from(callReports)
@@ -642,6 +852,7 @@ export class PostCallProcessor {
         .limit(1);
       if (
         latest?.processingVersion === job.processingVersion &&
+        latest.transcriptVersion === job.transcriptVersion &&
         latest.status === 'CURRENT' &&
         job.attempts > 1
       )
@@ -662,6 +873,7 @@ export class PostCallProcessor {
           organizationId: this.context.organizationId,
           callReportId: report.id,
           liveCallSessionId: loaded.session.id,
+          transcriptVersion: job.transcriptVersion,
           version: (latest?.version ?? 0) + 1,
           processingVersion: job.processingVersion,
           provider: this.provider.metadata.provider,
@@ -673,14 +885,69 @@ export class PostCallProcessor {
           inputTokens: usage.inputTokens,
           outputTokens: usage.outputTokens,
           estimatedCostMicros: usage.estimatedCostMicros,
-          evidenceCount: countEvidence(content)
+          evidenceCount: countEvidence(content),
+          summary: content.executiveSummary.value,
+          outcome: content.assessment.outcome,
+          confidence: content.assessment.confidence,
+          durationSeconds: content.durationSeconds,
+          participantCount: content.participants.length,
+          topicCount: content.topics.length,
+          objectionCount: content.objections.length,
+          actionItemCount: content.actionItems.length,
+          sellerScoreAverage: content.sellerPerformance.some((item) => item.score !== null)
+            ? content.sellerPerformance.reduce((sum, item) => sum + (item.score ?? 0), 0) /
+              content.sellerPerformance.filter((item) => item.score !== null).length
+            : null,
+          dealStage: content.dealAssessment.currentStage,
+          purchaseIntent: content.dealAssessment.purchaseIntent
         })
         .returning();
       if (!revision) throw new Error('POST_CALL_REVISION_NOT_CREATED');
+      if (content.evidence.length)
+        await tx.insert(callReportEvidence).values(
+          content.evidence.map((item) => ({
+            organizationId: this.context.organizationId,
+            callReportRevisionId: revision.id,
+            liveTranscriptTurnId: item.transcriptTurnId,
+            timestamp: new Date(item.timestamp),
+            speakerRole: item.speakerRole,
+            participantRole: item.participantRole,
+            excerpt: item.excerpt
+          }))
+        );
+      if (content.actionItems.length)
+        await tx.insert(callReportActionItems).values(
+          content.actionItems.map((item) => ({
+            organizationId: this.context.organizationId,
+            callReportRevisionId: revision.id,
+            description: item.description,
+            ownerRole: item.ownerRole,
+            ownerName: item.ownerName,
+            dueAt: item.dueAt ? new Date(item.dueAt) : null,
+            source: item.source,
+            confidence: item.confidence,
+            status: item.status,
+            evidenceTurnIds: item.evidenceTurnIds
+          }))
+        );
+      if (content.sellerPerformance.length)
+        await tx.insert(callReportSellerPerformance).values(
+          content.sellerPerformance.map((item) => ({
+            organizationId: this.context.organizationId,
+            callReportRevisionId: revision.id,
+            dimension: item.dimension,
+            rating: item.rating,
+            score: item.score,
+            confidence: item.confidence,
+            rationale: item.rationale,
+            evidenceTurnIds: item.evidenceTurnIds
+          }))
+        );
       await tx
         .update(callReports)
         .set({
           status: 'READY',
+          transcriptVersion: job.transcriptVersion,
           processingVersion: job.processingVersion,
           failureCode: null,
           readyAt: new Date(),

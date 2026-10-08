@@ -298,6 +298,15 @@ export class MorubiWorkerService {
       );
       return true;
     } catch (error) {
+      await new PostCallProcessor(this.database.db, context, this.postCallProvider, {
+        enabled: true,
+        maxSegmentCharacters: this.env.POST_CALL_MAX_SEGMENT_CHARACTERS,
+        maxOutputCharacters: this.env.POST_CALL_MAX_OUTPUT_CHARACTERS,
+        pricing: {
+          inputMicrosPerMillionTokens: this.env.DEEPSEEK_INPUT_COST_MICROS_PER_MILLION_TOKENS,
+          outputMicrosPerMillionTokens: this.env.DEEPSEEK_OUTPUT_COST_MICROS_PER_MILLION_TOKENS
+        }
+      }).recordFailure(job, error, performance.now() - startedAt);
       await jobs.fail(job, error);
       this.log.error(
         {

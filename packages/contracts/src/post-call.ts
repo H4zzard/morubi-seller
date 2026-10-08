@@ -2,13 +2,15 @@ import type { PostCallProposal, PostCallReportContent } from '@morubi/post-call'
 
 export type PostCallJobStatus =
   'PENDING' | 'PROCESSING' | 'COMPLETED' | 'FAILED' | 'RETRY' | 'CANCELLED';
-export type CallReportStatus = 'PROCESSING' | 'READY' | 'FAILED';
+export type CallReportStatus = 'PROCESSING' | 'READY' | 'FAILED' | 'STALE';
 
 export interface CallReportRevisionDto {
   id: string;
   version: number;
   status: 'CURRENT' | 'SUPERSEDED' | 'REJECTED';
   processingVersion: string;
+  transcriptVersion: string;
+  generationVersion: string;
   provider: string;
   model: string;
   content: PostCallReportContent;
@@ -23,6 +25,7 @@ export interface CallReportDto {
   id: string;
   liveCallSessionId: string;
   status: CallReportStatus;
+  transcriptVersion: string;
   processingVersion: string;
   failureCode: string | null;
   currentRevision: CallReportRevisionDto | null;
