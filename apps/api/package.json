@@ -15,6 +15,7 @@
   "dependencies": {
     "@morubi/ai": "workspace:*",
     "@fastify/cors": "11.3.0",
+    "@fastify/websocket": "11.2.0",
     "@morubi/auth": "workspace:*",
     "@morubi/config": "workspace:*",
     "@morubi/contracts": "workspace:*",
@@ -28,10 +29,12 @@
     "@morubi/storage": "workspace:*",
     "better-auth": "1.7.7",
     "fastify": "5.12.5",
+    "ws": "8.18.3",
     "zod": "4.6.5"
   },
   "devDependencies": {
     "@types/node": "24.10.1",
+    "@types/ws": "8.18.1",
     "dotenv": "18.0.5",
     "drizzle-orm": "0.45.3",
     "tsx": "4.23.15",

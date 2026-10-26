@@ -4,11 +4,14 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 let userDataDirectory = '';
+const safeStorageMocks = vi.hoisted(() => ({
+  isEncryptionAvailable: vi.fn(() => true)
+}));
 
 vi.mock('electron', () => ({
   app: { getPath: () => userDataDirectory },
   safeStorage: {
-    isEncryptionAvailable: () => true,
+    isEncryptionAvailable: safeStorageMocks.isEncryptionAvailable,
     encryptString: (value: string) => Buffer.from(`encrypted:${value}`, 'utf8'),
     decryptString: (value: Buffer) => value.toString('utf8').replace(/^encrypted:/u, '')
   }
@@ -16,7 +19,15 @@ vi.mock('electron', () => ({
 
 describe('SecureAuthStorage', () => {
   beforeEach(async () => {
+    safeStorageMocks.isEncryptionAvailable.mockClear();
     userDataDirectory = await mkdtemp(join(tmpdir(), 'morubi-auth-'));
+  });
+
+  it('does not access the operating-system keychain when there is no saved session', async () => {
+    const { SecureAuthStorage } = await import('./secure-auth-storage.js');
+
+    await expect(new SecureAuthStorage().read()).resolves.toBeNull();
+    expect(safeStorageMocks.isEncryptionAvailable).not.toHaveBeenCalled();
   });
 
   afterEach(async () => {

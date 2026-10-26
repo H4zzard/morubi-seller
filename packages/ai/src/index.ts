@@ -11,3 +11,4 @@ export * from './types.js';
 export * from './validation.js';
 export * from './transcription.js';
 export * from './gemini-transcription.js';
+export * from './gemini-realtime-transcription.js';

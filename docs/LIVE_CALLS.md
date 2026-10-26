@@ -1,4 +1,4 @@
-# Live Calls — Fase 8
+# Live Calls — Fase 8 + baseline operacional 9.6
 
 ## 1. Escopo e estado
 
@@ -13,7 +13,7 @@ MeetingDetector -> LiveCallSession -> consentimento explícito
   -> Intelligence Engine -> delivery/outbox/SSE -> desktop
 ```
 
-O fluxo executável de desenvolvimento usa detecção, captura e transcrição fixture. Existe um adapter de microfone com `MediaDevices`/`MediaRecorder`, protegido pelo main process do Electron, mas ele não é conectado a um fornecedor STT real nesta fase. Captura de áudio do sistema, observação automática do SO e providers externos não são alegados como prontos.
+O caminho operacional separa `MeetingDetection`, `LiveCallSession`, `AudioCapture` e `LiveTranscription`. O vendedor pode iniciar manualmente Meet, Zoom, Teams ou outra reunião mesmo quando nenhum detector automático estiver disponível. Após consentimento, `LOCAL_MIC` e `SYSTEM_AUDIO` são capturados em streams separados. No Windows, sistema usa loopback; no macOS 13+, um helper nativo ScreenCaptureKit entrega somente áudio pelo main process. Com autorização adicional de transcrição e os gates habilitados, PCM normalizado segue por WebSocket binário autenticado até o adapter Gemini no backend. Sem provider, a captura local continua disponível e nenhum áudio sai do dispositivo. Fixtures ficam atrás de flags exclusivas de desenvolvimento.
 
 ## 2. Modelo canônico
 
@@ -21,29 +21,47 @@ O fluxo executável de desenvolvimento usa detecção, captura e transcrição f
 
 Estados: `DETECTED -> READY|STARTING -> ACTIVE -> ENDING -> ENDED`, com terminais `FAILED` e `CANCELLED`. Transições inválidas e turnos após o encerramento são rejeitados. Uma unique parcial permite no máximo uma sessão `STARTING|ACTIVE|ENDING` por seller e tenant.
 
-## 3. Detecção de reunião
+## 3. Detecção de reunião e início manual
 
-`MeetingProviderAdapter` isola fornecedores. Meet exige o host HTTPS exato `meet.google.com`; Zoom aceita host `zoom.us`/subdomínio ou nome de processo conhecido. Lookalike hosts são rejeitados.
+`MeetingProviderAdapter` isola fornecedores. Meet exige o host HTTPS exato `meet.google.com` quando uma URL está legitimamente disponível. Para navegadores externos no Windows, `WindowsMeetingObservationProvider` lê somente PID, nome do processo, título da janela principal e visibilidade via PowerShell/Win32; não presume acesso à URL, DOM, pixels ou áudio.
 
-Não há varredura de janelas/processos no produto. O detector é uma camada pura e testada; o desktop oferece `FixtureMeetingDetector` no simulador. Um observador real de Windows/macOS deve ser implementado depois com permissões, distribuição assinada e testes por versão do SO.
+Chrome e Edge são elegíveis no Windows; Chrome, Beta e Canary são elegíveis no macOS. Processo, visibilidade e formato do título precisam trazer evidência compatível com Meet. Navegador comum, título ambíguo, janela oculta e lookalikes conhecidos são rejeitados. Como título não confirma URL nem participação efetiva, toda detecção desse provider exige confirmação manual. No macOS, esse observador é legado e opcional porque títulos fornecidos pelo `desktopCapturer` dependem de Gravação da Tela.
+
+O modo manual usa o mesmo endpoint, agregado e lifecycle da detecção automática, com `detectionEvidence=MANUAL`. Flags de detector não bloqueiam uma sessão manual; a flag de captura, o consentimento por sessão e os gates de mídia continuam obrigatórios. Falha ou ausência do detector não encerra uma captura ativa.
+
+### Comparação para detecção do Meet no navegador
+
+| Alternativa                                                            | Privilégio/atrito                                                              | Confiabilidade                                       | Decisão                                             |
+| ---------------------------------------------------------------------- | ------------------------------------------------------------------------------ | ---------------------------------------------------- | --------------------------------------------------- |
+| Título de janela/processo                                              | Baixo no Windows; exige Gravação da Tela no macOS                              | Heurística, não comprova host nem participação       | Manter como adapter legado opcional                 |
+| Atividade de áudio                                                     | Não exige acesso ao navegador                                                  | Não distingue reunião de música, vídeo ou alerta     | Rejeitada como confirmação                          |
+| Agenda                                                                 | Integração autorizada com calendário                                           | Indica evento, não que a reunião esteja aberta       | Apenas contexto futuro                              |
+| Extensão com permissão restrita a `meet.google.com` + Native Messaging | Instalação administrada e consentimento do navegador; sem histórico irrestrito | Comprova aba/host do Meet sem ler conversa ou pixels | Caminho recomendado para detecção automática futura |
+| Início manual                                                          | Nenhuma permissão de vídeo ou navegador                                        | Ação explícita do vendedor                           | Fallback operacional implementado agora             |
+
+A extensão ainda não está implementada nesta fase. Quando aberta, ela deve apenas publicar presença/estado mínimo de uma aba autorizada para um host permitido ao adapter canônico; não deve transportar áudio, DOM de conversas ou lógica comercial. Zoom desktop e Teams devem ter adapters próprios equivalentes, sem usar mera reprodução de áudio como detecção.
 
 ## 4. Captura, consentimento e indicador
 
-`LiveAudioCaptureProvider` define start/pause/resume/stop/health e chunks com sequência, fonte, MIME e duração. Há fixture determinística e adapter de microfone do renderer. A permissão do main process é de uso único por 30 segundos, somente áudio e somente para o `webContents` principal; request e check handlers são validados e a autorização é revogada em consumo, crash e fechamento. O pacote macOS declara `NSMicrophoneUsageDescription` e o main solicita `askForMediaAccess('microphone')` antes do gate interno.
+`LiveAudioCaptureProvider` define start/pause/resume/stop/health e chunks com sequência, fonte, MIME e duração. O microfone usa `getUserMedia` e Web Audio para produzir PCM, suporta dispositivo explícito, observa mute, fim de track e remoção do dispositivo e mede nível sem interpretar silêncio como fala.
 
-O início exige `CallConsentRecord`. Auto-start é `false`; política organizacional só é aceita se habilitada. Áudio de sistema/mixagem ainda não tem adapter real. O indicador “Morubi está ouvindo esta call” permanece visível durante a sessão. Retenção de áudio bruto live é zero e nenhum chunk fixture é persistido.
+No Windows, o áudio remoto usa `getDisplayMedia` e o `session.setDisplayMediaRequestHandler` disponível no Electron 44.5.1. O usuário escolhe uma fonte retornada por `desktopCapturer`; o main valida renderer, origem, sessão ativa, consentimento temporário e ID exato antes de responder com vídeo técnico e `audio: 'loopback'`. A track de vídeo é interrompida sem leitura de frames. Loopback representa todo áudio reproduzido no sistema, não somente o Meet.
+
+No macOS Ventura, o Electron 44.5.1 não suporta `audio: 'loopback'`. O adapter chama um helper Swift universal que usa ScreenCaptureKit, registra somente output de áudio e não altera a saída do sistema. A permissão do SO aparece como Gravação da Tela; ela pertence à captura de `SYSTEM_AUDIO`, não ao detector nem ao módulo Calls inteiro. O macOS 12 não fornece esse output e permanece bloqueado por um componente virtual licenciado. O fallback BlackHole foi preservado, mas não é distribuído pelo Morubi.
+
+O início exige `CallConsentRecord` com `LOCAL_MIC` e `SYSTEM_AUDIO`. A simples abertura da tela, uma detecção ou a seleção da plataforma não concede acesso à mídia. Auto-start é `false`; política organizacional só é aceita se habilitada. O indicador de captura permanece visível durante a sessão. Se uma fonte falhar, ambas são paradas e a sessão é encerrada; logout, encerramento real e crash também revogam grants e limpam tracks. Ocultar a janela preserva a captura já autorizada. Retenção de áudio bruto live é zero.
 
 ## 5. Backpressure, heartbeat e reconexão
 
-`BoundedAudioBuffer` tem limite tenant-configurável (default 4 MiB), descarta chunks antigos sob pressão e conta drops. O transporte consulta o head com `peek` e só remove após `acknowledge`, permitindo retry após desconexão. Heartbeats atualizam sessão/usage e recusam buffers acima do limite. O worker encerra sessões ativas com heartbeat stale. SSE mantém outbox durável e `Last-Event-ID`.
+`BoundedAudioBuffer` divide o limite local configurável entre as duas fontes, descarta chunks antigos sob pressão e conta drops. Heartbeats levam somente métricas: bytes, chunks, drops, idade do último chunk, níveis, mute e falhas. Quando autorizado, `LiveAudioChunk.data` cruza IPC validado até o Electron main e segue em frames binários pelo WebSocket; não passa por HTTP/JSON/base64. O worker encerra sessões ativas com heartbeat stale.
 
 ## 6. Transcrição realtime e turnos
 
-`RealtimeTranscriptionProvider` é separado do `TranscriptionProvider` assíncrono da Fase 7. Não há credencial ou contrato de provider realtime configurado; o único executável é `FixtureRealtimeTranscriptionProvider`, determinístico e sem egress.
+`RealtimeTranscriptionProvider` é separado do `TranscriptionProvider` assíncrono da Fase 7. O provider real implementado é Gemini Live Transcription, aberto somente na API quando os três gates e a credencial existem. Cada fonte recebe um stream independente; o Desktop nunca recebe a chave. Sessões do provider são renovadas aos nove minutos para respeitar o limite oficial de dez minutos.
 
 A decisão de transporte é backend-controlled para sessão, autorização, billing, observabilidade e persistência de turns. O desktop nunca recebe chave secreta de STT. Um token efêmero autorizado pelo backend pode ser avaliado no adapter futuro se reduzir latência sem perder esses controles.
 
-Parciais podem alimentar UI, mas não criam evento, job ou decisão. Um final substitui o parcial idempotentemente e entra no pipeline comercial. `LiveTurnAggregator` une finais adjacentes do mesmo speaker sob limites de gap, caracteres e duração. Diarização real permanece pendente.
+Parciais alimentam apenas a UI e podem ser revisados. Um final substitui o parcial pelo ID estável e é persistido idempotentemente. Nesta fase ele usa `emitCommercialEvent=false`: não cria evento, job, decisão, coaching ou relatório. `LOCAL_MIC` é vendedor; `SYSTEM_AUDIO` é participante remoto não identificado. Gemini Live não oferece diarização do canal remoto. Detalhes e gates estão em `docs/LIVE_TRANSCRIPTION.md`.
 
 ## 7. Memória, fases e Copilot
 
@@ -51,11 +69,11 @@ A memória incremental mantém fase, dores, objeções, perguntas abertas, buyin
 
 O detector de fase é heurístico e persiste origem/confidence. Cards live usam TTL curto, session/turn IDs, expiram cards anteriores e rejeitam turnos obsoletos. Geração live possui gate próprio desligado; por default o caminho reutiliza decisão, policy e templates existentes.
 
-## 8. Desktop e modo compacto
+## 8. Desktop, início manual e modo compacto
 
-A área Calls possui estados aguardando, detectada, ativa e encerrada; exibe consentimento, contexto, fase, duração, transcript, memória e guidance. O modo compacto usa a mesma janela, pode ser always-on-top por ação do usuário e não mostra transcript.
+A área Calls possui estados aguardando, detectada, consentimento, ativa e encerrada. No estado aguardando, `Iniciar copiloto` permite escolher Google Meet, Zoom, Microsoft Teams ou Outra reunião. A tela mostra duração e sinal/chunks reais das duas fontes. O modo compacto usa a mesma janela e pode ser always-on-top por ação do usuário.
 
-O simulator dev cria Meet/Zoom fixture, inicia com consentimento manual, emite roteiro parcial/final e encerra a sessão. Ele exige conversa vinculada a deal e fica indisponível em produção.
+O simulator dev permanece isolado por `MORUBI_LIVE_DEV_SIMULATOR_ENABLED`, só pode aparecer fora de produção e fica desligado por padrão. Quando `MORUBI_LIVE_CAPTURE_ENABLED=true`, a tela Calls usa o observador e os providers reais.
 
 ## 9. Persistência e tenancy
 
@@ -65,23 +83,26 @@ As quatro tabelas possuem `organization_id`, FKs compostas tenant-consistentes, 
 
 ## 10. Métricas e custo
 
-`call_usage` registra duração, áudio processado, unidades, decisões, gerações, cards, drops e custo em micros. IDs live também chegam a `AIUsage`. O custo STT é calculado no servidor a partir da duração e `LIVE_TRANSCRIPTION_COST_MICROS_PER_MINUTE`; o cliente não informa preço. O detalhe expõe `speechToCardMs` quando há delivery.
+`call_usage` registra duração, áudio processado, tokens de entrada/saída, origem da medição, decisões, gerações, cards, drops e custo em micros. Usage enviado pelo provider é marcado `ACTUAL`; até chegar, o servidor usa `LIVE_TRANSCRIPTION_COST_MICROS_PER_MINUTE` como estimativa. O cliente nunca informa preço. A migration aditiva `0014_live_transcription_usage.sql` preserva tenant, RLS e constraints existentes.
 
 ## 11. Flags seguras
 
-Todos começam `false`: `LIVE_CALLS_ENABLED`, `MEET_DETECTION_ENABLED`, `ZOOM_DETECTION_ENABLED`, `LIVE_TRANSCRIPTION_ENABLED`, `LIVE_COPILOT_ENABLED`, `LIVE_GENERATION_ENABLED` e `MORUBI_LIVE_CAPTURE_ENABLED`. Settings equivalentes existem por tenant.
+Os gates do servidor começam `false`: `LIVE_CALLS_ENABLED`, `MEET_DETECTION_ENABLED`, `ZOOM_DETECTION_ENABLED`, `LIVE_TRANSCRIPTION_ENABLED`, `LIVE_COPILOT_ENABLED` e `LIVE_GENERATION_ENABLED`. O bundle Desktop habilita a captura local consentida por padrão, com `MORUBI_LIVE_CAPTURE_ENABLED=false` disponível como kill switch explícito; desenvolvimento local continua desabilitado sem opt-in. `MORUBI_LIVE_DEV_SIMULATOR_ENABLED` começa `false`. `MORUBI_LIVE_AUDIO_BUFFER_BYTES` limita memória local e `MORUBI_MEETING_OBSERVATION_INTERVAL_MS` controla polling. Settings equivalentes de call continuam tenant-scoped.
 
 ## 12. Limites antes de produção
 
-- escolher provider STT realtime, região, DPA, retenção e preço;
-- implementar transporte streaming real e conectar captura com recuperação de rede;
-- implementar observadores Meet/Zoom autorizados por SO;
-- decidir captura de áudio remoto/sistema por plataforma;
+- fornecer credencial server-side e validar Gemini Live com reunião humana autorizada;
+- validar região, DPA, tratamento/retenção do provider e preço faturado;
+- implementar purga e exclusão autorizada dos finais live e seus derivados;
+- validar o observador Meet e o loopback em hardware Windows suportado;
+- implementar Zoom sem acoplar a lógica comercial;
+- implementar e validar a integração mínima com navegador para detecção automática de Meet sem permissão de vídeo;
+- validar o fluxo manual completo, microfone e ScreenCaptureKit no bundle macOS com consentimento humano;
 - validar permissões, assinatura/notarização e UX em Windows/macOS reais;
 - avaliar diarização, WER, latência p95 e false-card rate com corpus autorizado;
-- aplicar migration/RLS no PostgreSQL e fazer soak/load com infraestrutura real.
+- fazer soak/load de rede/provider e validar a renovação real de sessão.
 
-Teams, bot participante, browser extension, gravação bruta, envio automático e Fase 9 não fazem parte desta entrega.
+Bot participante, gravação bruta, DeepSeek, coaching e IA comercial live não fazem parte desta entrega. A integração com navegador é o próximo passo de detecção, não uma dependência do início manual.
 
 # Encerramento e pós-call
 

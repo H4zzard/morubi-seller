@@ -17,5 +17,23 @@ services:
       timeout: 5s
       retries: 10
 
+  postgres-test:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: morubi_test
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_USER: postgres
+    ports:
+      - '5433:5432'
+    volumes:
+      - morubi-postgres-test:/var/lib/postgresql/data
+      - ./packages/db/docker/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres -d morubi_test']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
 volumes:
   morubi-postgres:
+  morubi-postgres-test:

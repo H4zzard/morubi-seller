@@ -192,15 +192,21 @@ function roleToParticipant(role: PostCallTurn['speakerRole']): 'HOST' | 'GUEST' 
   return role === 'SELLER' ? 'HOST' : role === 'LEAD' ? 'GUEST' : 'UNKNOWN';
 }
 
+function isTurnMap(
+  source: ReadonlySet<string> | ReadonlyMap<string, PostCallTurn>
+): source is ReadonlyMap<string, PostCallTurn> {
+  return 'get' in source;
+}
+
 export function reconcilePostCallReport(
   candidate: unknown,
   validSource: ReadonlySet<string> | ReadonlyMap<string, PostCallTurn>,
   metadata?: { transcriptVersion: string; generationVersion: string; durationSeconds: number }
 ): PostCallReportContent {
   const parsed = postCallReportContentSchema.parse(candidate);
-  const sourceMap = validSource instanceof Map ? validSource : null;
+  const sourceMap = isTurnMap(validSource) ? validSource : null;
   const validTurnIds: ReadonlySet<string> =
-    validSource instanceof Set ? validSource : new Set(validSource.keys());
+    isTurnMap(validSource) ? new Set(validSource.keys()) : validSource;
   const executiveEvidence = parsed.executiveSummary.evidenceTurnIds.filter((id) => validTurnIds.has(id));
   const assessmentEvidence = parsed.assessment.evidenceTurnIds.filter((id) => validTurnIds.has(id));
   const dealEvidence = parsed.dealAssessment.evidenceTurnIds.filter((id) => validTurnIds.has(id));

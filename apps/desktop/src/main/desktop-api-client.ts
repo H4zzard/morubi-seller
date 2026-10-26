@@ -18,6 +18,7 @@ import type {
   LiveCallHeartbeatRequest,
   LiveCallSessionDto,
   LiveCallTurnResultDto,
+  LiveTranscriptionCapabilityDto,
   LiveTranscriptTurnRequest,
   CreateLiveCallRequest,
   StartLiveCallRequest,
@@ -32,6 +33,62 @@ export interface AuthStorage {
   clear(): Promise<void>;
 }
 
+type PublicApiErrorCode =
+  'UNAUTHORIZED' | 'FORBIDDEN' | 'NOT_FOUND' | 'VALIDATION_ERROR' | 'CONFLICT' | 'INTERNAL_ERROR';
+
+interface PublicApiErrorEnvelope {
+  error: {
+    code: PublicApiErrorCode;
+    message: string;
+    requestId?: string;
+  };
+}
+
+function isPublicApiErrorCode(value: unknown): value is PublicApiErrorCode {
+  return (
+    value === 'UNAUTHORIZED' ||
+    value === 'FORBIDDEN' ||
+    value === 'NOT_FOUND' ||
+    value === 'VALIDATION_ERROR' ||
+    value === 'CONFLICT' ||
+    value === 'INTERNAL_ERROR'
+  );
+}
+
+function publicApiError(value: unknown): PublicApiErrorEnvelope | null {
+  if (!value || typeof value !== 'object' || !('error' in value)) return null;
+  const candidate = value.error;
+  if (!candidate || typeof candidate !== 'object') return null;
+  const code = 'code' in candidate ? candidate.code : null;
+  const message = 'message' in candidate ? candidate.message : null;
+  const requestId = 'requestId' in candidate ? candidate.requestId : undefined;
+  if (
+    !isPublicApiErrorCode(code) ||
+    typeof message !== 'string' ||
+    (requestId !== undefined && typeof requestId !== 'string')
+  )
+    return null;
+  return {
+    error: {
+      code,
+      message,
+      ...(requestId === undefined ? {} : { requestId })
+    }
+  };
+}
+
+export class DesktopApiError extends Error {
+  public constructor(
+    message: string,
+    public readonly status: number,
+    public readonly code: PublicApiErrorCode | 'UNEXPECTED_RESPONSE',
+    public readonly requestId?: string
+  ) {
+    super(message);
+    this.name = 'DesktopApiError';
+  }
+}
+
 function splitCombinedSetCookie(value: string): string[] {
   return value.split(/,(?=\s*[^;,\s]+=)/u);
 }
@@ -39,9 +96,7 @@ function splitCombinedSetCookie(value: string): string[] {
 export function cookieHeader(response: Response): string {
   const getSetCookie = Reflect.get(response.headers, 'getSetCookie');
   const reflected: unknown =
-    typeof getSetCookie === 'function'
-      ? Reflect.apply(getSetCookie, response.headers, [])
-      : null;
+    typeof getSetCookie === 'function' ? Reflect.apply(getSetCookie, response.headers, []) : null;
 
   const values =
     Array.isArray(reflected) && reflected.every((value) => typeof value === 'string')
@@ -176,11 +231,7 @@ export class DesktopApiClient {
       throw new Error('O tenant não pôde ser resolvido.');
     }
 
-    await this.request(
-      '/v1/auth/session/audit',
-      { ...state, organizationId },
-      { method: 'POST' }
-    );
+    await this.request('/v1/auth/session/audit', { ...state, organizationId }, { method: 'POST' });
 
     return session;
   }
@@ -199,42 +250,29 @@ export class DesktopApiClient {
     }
   }
 
-  public listContacts(
-    search?: string
-  ): Promise<CursorPageDto<ContactSummaryDto>> {
-    return this.getJson(
-      `/v1/contacts${search ? `?search=${encodeURIComponent(search)}` : ''}`
-    );
+  public listContacts(search?: string): Promise<CursorPageDto<ContactSummaryDto>> {
+    return this.getJson(`/v1/contacts${search ? `?search=${encodeURIComponent(search)}` : ''}`);
   }
 
   public getContact(contactId: string): Promise<ContactDetailDto> {
     return this.getJson(`/v1/contacts/${contactId}`);
   }
 
-  public listDeals(
-    search?: string
-  ): Promise<CursorPageDto<DealSummaryDto>> {
-    return this.getJson(
-      `/v1/deals${search ? `?search=${encodeURIComponent(search)}` : ''}`
-    );
+  public listDeals(search?: string): Promise<CursorPageDto<DealSummaryDto>> {
+    return this.getJson(`/v1/deals${search ? `?search=${encodeURIComponent(search)}` : ''}`);
   }
 
   public getDeal(dealId: string): Promise<DealDetailDto> {
     return this.getJson(`/v1/deals/${dealId}`);
   }
 
-  public listConversations(
-    search?: string
-  ): Promise<CursorPageDto<ConversationSummaryDto>> {
+  public listConversations(search?: string): Promise<CursorPageDto<ConversationSummaryDto>> {
     return this.getJson(
       `/v1/conversations${search ? `?search=${encodeURIComponent(search)}` : ''}`
     );
   }
 
-  public listMessages(
-    conversationId: string,
-    cursor?: string
-  ): Promise<ConversationMessagesDto> {
+  public listMessages(conversationId: string, cursor?: string): Promise<ConversationMessagesDto> {
     return this.getJson(
       `/v1/conversations/${conversationId}/messages${
         cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''
@@ -249,20 +287,16 @@ export class DesktopApiClient {
       throw new Error('Selecione uma organização.');
     }
 
-    const response = await this.request(
-      `/v1/conversations/${conversationId}/read`,
-      state,
-      { method: 'POST' }
-    );
+    const response = await this.request(`/v1/conversations/${conversationId}/read`, state, {
+      method: 'POST'
+    });
 
     if (!response.ok) {
       throw new Error('Não foi possível atualizar a leitura.');
     }
   }
 
-  public getConversationContext(
-    conversationId: string
-  ): Promise<ConversationContextDto> {
+  public getConversationContext(conversationId: string): Promise<ConversationContextDto> {
     return this.getJson(`/v1/conversations/${conversationId}/context`);
   }
 
@@ -273,10 +307,7 @@ export class DesktopApiClient {
       throw new Error('Selecione uma organização.');
     }
 
-    const response = await this.request(
-      `/v1/messages/${messageId}/audio`,
-      state
-    );
+    const response = await this.request(`/v1/messages/${messageId}/audio`, state);
 
     if (!response.ok) {
       throw new Error('O áudio não está disponível.');
@@ -286,8 +317,7 @@ export class DesktopApiClient {
 
     return {
       mimeType:
-        response.headers.get('content-type')?.split(';', 1)[0] ??
-        'application/octet-stream',
+        response.headers.get('content-type')?.split(';', 1)[0] ?? 'application/octet-stream',
       dataBase64: Buffer.from(bytes).toString('base64')
     };
   }
@@ -304,35 +334,25 @@ export class DesktopApiClient {
     return this.postJson(`/v1/interventions/${deliveryId}/applied`);
   }
 
-  public async feedback(
-    deliveryId: string,
-    input: InterventionFeedbackInput
-  ): Promise<void> {
+  public async feedback(deliveryId: string, input: InterventionFeedbackInput): Promise<void> {
     const state = await this.storage.read();
 
     if (!state?.organizationId) {
       throw new Error('Selecione uma organização.');
     }
 
-    const response = await this.request(
-      `/v1/interventions/${deliveryId}/feedback`,
-      state,
-      {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(input)
-      }
-    );
+    const response = await this.request(`/v1/interventions/${deliveryId}/feedback`, state, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(input)
+    });
 
     if (!response.ok) {
       throw new Error('Não foi possível registrar o feedback.');
     }
   }
 
-  public async realtime(
-    lastEventId: string | null,
-    signal: AbortSignal
-  ): Promise<Response> {
+  public async realtime(lastEventId: string | null, signal: AbortSignal): Promise<Response> {
     const state = await this.storage.read();
 
     if (!state?.organizationId) {
@@ -353,15 +373,48 @@ export class DesktopApiClient {
     });
   }
 
-  public getCurrentLiveCall(): Promise<{
+  public async getCurrentLiveCall(): Promise<{
     session: LiveCallDetailDto | null;
   }> {
-    return this.getJson('/v1/live-calls/current');
+    const state = await this.storage.read();
+
+    if (!state?.organizationId) {
+      throw new Error('Selecione uma organização.');
+    }
+
+    const response = await this.request('/v1/live-calls/current', state);
+    if (response.status === 404) throw new Error('LIVE_CALLS_SERVICE_DISABLED');
+    if (!response.ok) throw new Error('LIVE_CALLS_SERVICE_UNAVAILABLE');
+    return (await response.json()) as { session: LiveCallDetailDto | null };
   }
 
-  public createLiveCall(
-    input: CreateLiveCallRequest
-  ): Promise<LiveCallSessionDto> {
+  public async liveAudioConnection(sessionId: string): Promise<{
+    url: string;
+    headers: Record<string, string>;
+  }> {
+    const state = await this.storage.read();
+    if (!state?.organizationId) throw new Error('Selecione uma organização.');
+    const url = new URL(`/v1/live-calls/${sessionId}/audio`, this.baseUrl);
+    const local = url.hostname === 'localhost' || url.hostname === '127.0.0.1';
+    if (url.protocol !== 'https:' && !local) throw new Error('LIVE_AUDIO_TLS_REQUIRED');
+    url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+    return {
+      url: url.toString(),
+      headers: {
+        cookie: state.cookie,
+        origin: this.origin,
+        'x-organization-id': state.organizationId,
+        'x-request-id': crypto.randomUUID(),
+        'x-morubi-client': 'desktop'
+      }
+    };
+  }
+
+  public getLiveTranscriptionCapability(): Promise<LiveTranscriptionCapabilityDto> {
+    return this.getJson('/v1/live-calls/transcription-capability');
+  }
+
+  public createLiveCall(input: CreateLiveCallRequest): Promise<LiveCallSessionDto> {
     return this.requestJson('/v1/live-calls', 'POST', input);
   }
 
@@ -369,11 +422,7 @@ export class DesktopApiClient {
     sessionId: string,
     input: StartLiveCallRequest
   ): Promise<LiveCallSessionDto> {
-    return this.requestJson(
-      `/v1/live-calls/${sessionId}/start`,
-      'POST',
-      input
-    );
+    return this.requestJson(`/v1/live-calls/${sessionId}/start`, 'POST', input);
   }
 
   public getLiveCall(sessionId: string): Promise<LiveCallDetailDto> {
@@ -384,29 +433,18 @@ export class DesktopApiClient {
     sessionId: string,
     input: LiveCallHeartbeatRequest
   ): Promise<{ receivedAt: string; bufferAccepted: boolean }> {
-    return this.requestJson(
-      `/v1/live-calls/${sessionId}/heartbeat`,
-      'POST',
-      input
-    );
+    return this.requestJson(`/v1/live-calls/${sessionId}/heartbeat`, 'POST', input);
   }
 
   public sendLiveCallTurn(
     sessionId: string,
     input: LiveTranscriptTurnRequest
   ): Promise<LiveCallTurnResultDto> {
-    return this.requestJson(
-      `/v1/live-calls/${sessionId}/turns`,
-      'POST',
-      input
-    );
+    return this.requestJson(`/v1/live-calls/${sessionId}/turns`, 'POST', input);
   }
 
   public endLiveCall(sessionId: string): Promise<LiveCallSessionDto> {
-    return this.requestJson(
-      `/v1/live-calls/${sessionId}/end`,
-      'POST'
-    );
+    return this.requestJson(`/v1/live-calls/${sessionId}/end`, 'POST');
   }
 
   public getCallReport(sessionId: string): Promise<CallReportDto> {
@@ -414,26 +452,15 @@ export class DesktopApiClient {
   }
 
   public retryCallReport(sessionId: string): Promise<CallReportDto> {
-    return this.requestJson(
-      `/v1/live-calls/${sessionId}/report/retry`,
-      'POST'
-    );
+    return this.requestJson(`/v1/live-calls/${sessionId}/report/retry`, 'POST');
   }
 
-  public getCallTranscript(
-    sessionId: string
-  ): Promise<CallTranscriptDto> {
+  public getCallTranscript(sessionId: string): Promise<CallTranscriptDto> {
     return this.getJson(`/v1/live-calls/${sessionId}/transcript`);
   }
 
-  public simulateLiveCall(
-    input: DevLiveCallScenarioRequest
-  ): Promise<unknown> {
-    return this.requestJson(
-      '/v1/dev/live-calls/simulate',
-      'POST',
-      input
-    );
+  public simulateLiveCall(input: DevLiveCallScenarioRequest): Promise<unknown> {
+    return this.requestJson('/v1/dev/live-calls/simulate', 'POST', input);
   }
 
   private async getJson<T>(path: string): Promise<T> {
@@ -470,11 +497,7 @@ export class DesktopApiClient {
     return (await response.json()) as T;
   }
 
-  private async requestJson<T>(
-    path: string,
-    method: 'POST' | 'PATCH',
-    body?: unknown
-  ): Promise<T> {
+  private async requestJson<T>(path: string, method: 'POST' | 'PATCH', body?: unknown): Promise<T> {
     const state = await this.storage.read();
 
     if (!state?.organizationId) {
@@ -492,10 +515,35 @@ export class DesktopApiClient {
     });
 
     if (!response.ok) {
-      throw new Error('Não foi possível atualizar a call ao vivo.');
+      throw await this.liveCallRequestError(response);
     }
 
     return (await response.json()) as T;
+  }
+
+  private async liveCallRequestError(response: Response): Promise<DesktopApiError> {
+    const payload = publicApiError(await response.json().catch(() => null));
+    const fallback =
+      response.status === 401
+        ? 'Sua sessão expirou. Entre novamente e tente de novo.'
+        : response.status === 403
+          ? 'Sua conta não tem permissão para iniciar esta call.'
+          : response.status === 404
+            ? 'O serviço de Calls não está disponível neste ambiente.'
+            : response.status === 409
+              ? 'Não foi possível iniciar porque o estado da call mudou. Atualize e tente novamente.'
+              : 'Não foi possível atualizar a call ao vivo.';
+    const mayUsePublicMessage =
+      payload &&
+      ['UNAUTHORIZED', 'FORBIDDEN', 'NOT_FOUND', 'VALIDATION_ERROR', 'CONFLICT'].includes(
+        payload.error.code
+      );
+    return new DesktopApiError(
+      mayUsePublicMessage ? payload.error.message : fallback,
+      response.status,
+      payload?.error.code ?? 'UNEXPECTED_RESPONSE',
+      payload?.error.requestId
+    );
   }
 
   private request(

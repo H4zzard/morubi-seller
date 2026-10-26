@@ -40,6 +40,16 @@ export const apiEnvSchema = z
     DEEPSEEK_ENABLED: booleanFromString,
     AUDIO_INTELLIGENCE_ENABLED: booleanFromString,
     GEMINI_TRANSCRIPTION_ENABLED: booleanFromString,
+    GEMINI_API_KEY: z.string().min(1).optional(),
+    GEMINI_BASE_URL: z.url().default('https://generativelanguage.googleapis.com'),
+    GEMINI_LIVE_TRANSCRIPTION_MODEL: z.string().min(1).default('gemini-3.5-transcribe-live'),
+    GEMINI_LIVE_CONNECT_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(60_000).default(10_000),
+    GEMINI_LIVE_SESSION_RENEWAL_MS: z.coerce
+      .number()
+      .int()
+      .min(60_000)
+      .max(570_000)
+      .default(540_000),
     LIVE_CALLS_ENABLED: booleanFromString,
     MEET_DETECTION_ENABLED: booleanFromString,
     ZOOM_DETECTION_ENABLED: booleanFromString,
@@ -52,7 +62,22 @@ export const apiEnvSchema = z
       .int()
       .min(0)
       .max(Number.MAX_SAFE_INTEGER)
-      .default(0),
+      .default(9_000),
+    GEMINI_LIVE_INPUT_COST_MICROS_PER_MILLION_TOKENS: z.coerce
+      .number()
+      .int()
+      .min(0)
+      .max(Number.MAX_SAFE_INTEGER)
+      .default(3_500_000),
+    GEMINI_LIVE_OUTPUT_COST_MICROS_PER_MILLION_TOKENS: z.coerce
+      .number()
+      .int()
+      .min(0)
+      .max(Number.MAX_SAFE_INTEGER)
+      .default(21_000_000),
+    LIVE_AUDIO_MAX_PACKET_BYTES: z.coerce.number().int().min(3_200).max(262_144).default(65_536),
+    LIVE_AUDIO_MAX_SESSION_MINUTES: z.coerce.number().int().min(1).max(180).default(90),
+    LIVE_AUDIO_MAX_CONNECTIONS_PER_ORG: z.coerce.number().int().min(1).max(100).default(5),
     AUDIO_STORAGE_ROOT: z.string().min(1).default('.data/audio'),
     AUDIO_MAX_BYTES: z.coerce.number().int().min(1024).max(104_857_600).default(20_971_520),
     AUDIO_RETENTION_DAYS: z.coerce.number().int().min(1).max(3650).default(30)
@@ -71,7 +96,20 @@ export const desktopEnvSchema = z.object({
   MORUBI_API_URL: z.url().default('http://localhost:4000'),
   MORUBI_DESKTOP_ORIGIN: z.string().min(1).optional(),
   MORUBI_USER_DATA_DIR: z.string().min(1).optional(),
-  MORUBI_LIVE_CAPTURE_ENABLED: booleanFromString
+  MORUBI_LIVE_CAPTURE_ENABLED: booleanFromString,
+  MORUBI_LIVE_DEV_SIMULATOR_ENABLED: booleanFromString,
+  MORUBI_LIVE_AUDIO_BUFFER_BYTES: z.coerce
+    .number()
+    .int()
+    .min(65_536)
+    .max(67_108_864)
+    .default(4_194_304),
+  MORUBI_MEETING_OBSERVATION_INTERVAL_MS: z.coerce
+    .number()
+    .int()
+    .min(1_000)
+    .max(60_000)
+    .default(3_000)
 });
 
 const bigintFromString = z
@@ -83,7 +121,7 @@ export const workerEnvSchema = z
   .object({
     NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
     DATABASE_URL: z.url(),
-    DATABASE_ADMIN_URL: z.url().optional(),
+    WORKER_COORDINATOR_DATABASE_URL: z.url(),
     LOG_LEVEL: z
       .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'])
       .default('info'),
@@ -164,6 +202,17 @@ export const workerEnvSchema = z
         code: 'custom',
         path: ['GEMINI_API_KEY'],
         message: 'GEMINI_API_KEY is required when Gemini transcription is enabled.'
+      });
+    }
+    if (
+      value.NODE_ENV === 'production' &&
+      value.POST_CALL_INTELLIGENCE_ENABLED &&
+      value.POST_CALL_PROVIDER === 'fixture'
+    ) {
+      context.addIssue({
+        code: 'custom',
+        path: ['POST_CALL_PROVIDER'],
+        message: 'The fixture post-call provider cannot be enabled in production.'
       });
     }
   })

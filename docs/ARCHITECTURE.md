@@ -387,7 +387,7 @@ As fronteiras novas são `IntelligenceJobRepository`, `CopilotRepository`, `Desk
 
 Geração sucede decisão, policy e tentativa de template. `GENERATION_REQUIRED` cria `generation_jobs`; `apps/worker` consome tanto intelligence quanto generation jobs em processo separado. PostgreSQL permanece fila durável com `SKIP LOCKED`, backoff, tentativas limitadas e recuperação de locks, sem introduzir Redis. A API mantém HTTP, auth, ingress, queries e SSE.
 
-Cada job é processado na role runtime tenant-scoped; uma conexão coordenadora administrativa serve apenas para descobrir filas. `generation_jobs` e `generative_executions` possuem FKs compostas, RLS forçado e chaves idempotentes. Contexto é compacto, sanitizado e delimitado como não confiável. Output só se torna candidata `GENERATED` após schema, business/company/playbook validation, cost policy e duas verificações de staleness.
+Cada job é processado na role runtime tenant-scoped; a role mínima `morubi_worker` descobre filas somente por uma função de snapshot sem acesso direto às tabelas. `generation_jobs` e `generative_executions` possuem FKs compostas, RLS forçado e chaves idempotentes. Contexto é compacto, sanitizado e delimitado como não confiável. Output só se torna candidata `GENERATED` após schema, business/company/playbook validation, cost policy e duas verificações de staleness.
 
 O worker suporta shutdown gracioso e telemetria sem conteúdo: queue depth aproximada, claims, conclusões, falhas, retries e latência. Prompt/resposta completos não são registrados em logs. O desenho detalhado está em `GENERATIVE_INTELLIGENCE.md`.
 

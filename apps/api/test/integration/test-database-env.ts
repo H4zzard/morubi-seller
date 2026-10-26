@@ -1,13 +1,15 @@
 const requiredVariables = [
   'TEST_DATABASE_ADMIN_URL',
   'TEST_DATABASE_URL',
-  'TEST_AUTH_DATABASE_URL'
+  'TEST_AUTH_DATABASE_URL',
+  'TEST_WORKER_COORDINATOR_DATABASE_URL'
 ] as const;
 
 export interface TestDatabaseEnvironment {
   adminUrl: string;
   runtimeUrl: string;
   authUrl: string;
+  workerCoordinatorUrl: string;
 }
 
 export function getTestDatabaseEnvironment(
@@ -24,6 +26,7 @@ export function getTestDatabaseEnvironment(
   return {
     adminUrl: environment.TEST_DATABASE_ADMIN_URL!.trim(),
     runtimeUrl: environment.TEST_DATABASE_URL!.trim(),
-    authUrl: environment.TEST_AUTH_DATABASE_URL!.trim()
+    authUrl: environment.TEST_AUTH_DATABASE_URL!.trim(),
+    workerCoordinatorUrl: environment.TEST_WORKER_COORDINATOR_DATABASE_URL!.trim()
   };
 }

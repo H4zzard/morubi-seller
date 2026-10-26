@@ -3,6 +3,7 @@ import {
   BookOpen,
   CalendarDays,
   ContactRound,
+  CircleHelp,
   Headphones,
   Home,
   LogOut,
@@ -19,6 +20,14 @@ import type { SessionDto } from '@morubi/contracts';
 import { Button, MorubiMark, PagePlaceholder } from '@morubi/ui';
 import { ContactsView, ConversationsView, DealsView } from './commercial-views';
 import { LiveCallsView } from './live-calls-view';
+import { HelpCenter } from './help-center';
+import { Onboarding } from './onboarding';
+
+type WorkspaceView = NavigationItemKey | 'help';
+
+function onboardingStorageKey(userId: string): string {
+  return `morubi:onboarding:v1:${userId}`;
+}
 
 const navigation = {
   home: { label: 'Home', icon: Home },
@@ -100,13 +109,17 @@ function Login({ onAuthenticated }: { onAuthenticated: (session: SessionDto) => 
 
 function Workspace({
   initialSession,
-  onLogout
+  onLogout,
+  onSessionChange,
+  onRerunOnboarding
 }: {
   initialSession: SessionDto;
   onLogout: () => void;
+  onSessionChange: (session: SessionDto) => void;
+  onRerunOnboarding: () => void;
 }) {
   const [session, setSession] = useState(initialSession);
-  const [active, setActive] = useState<NavigationItemKey>('home');
+  const [active, setActive] = useState<WorkspaceView>('home');
   const items = useMemo(
     () => (session.tenant ? desktopNavigationForRole(session.tenant.role) : []),
     [session.tenant]
@@ -124,7 +137,10 @@ function Workspace({
               key={choice.organization.id}
               variant="secondary"
               onClick={() =>
-                void window.morubi.auth.setOrganization(choice.organization.id).then(setSession)
+                void window.morubi.auth.setOrganization(choice.organization.id).then((updated) => {
+                  setSession(updated);
+                  onSessionChange(updated);
+                })
               }
             >
               {choice.organization.name} · {choice.membership.role}
@@ -138,9 +154,11 @@ function Workspace({
     );
   }
 
-  const current = navigation[active];
+  const current = active === 'help' ? null : navigation[active];
   const content =
-    active === 'conversations' ? (
+    active === 'help' ? (
+      <HelpCenter onRerunOnboarding={onRerunOnboarding} />
+    ) : active === 'conversations' ? (
       <ConversationsView />
     ) : active === 'opportunities' ? (
       <DealsView />
@@ -151,8 +169,8 @@ function Workspace({
     ) : (
       <PagePlaceholder
         eyebrow="Desktop-first"
-        title={current.label}
-        description={`O shell de ${current.label} está pronto para receber seu próximo vertical slice sem levar regras de negócio para o Electron.`}
+        title={current?.label ?? ''}
+        description={`O shell de ${current?.label ?? ''} está pronto para receber seu próximo vertical slice sem levar regras de negócio para o Electron.`}
       />
     );
   return (
@@ -191,9 +209,14 @@ function Workspace({
       <main className="desktop-main">
         <header>
           <span>Workspace do vendedor</span>
-          <span className="desktop-online">
-            <i /> API conectada
-          </span>
+          <div className="desktop-header__actions">
+            <button className={active === 'help' ? 'active' : ''} onClick={() => setActive('help')}>
+              <CircleHelp size={15} /> Ajuda
+            </button>
+            <span className="desktop-online">
+              <i /> API conectada
+            </span>
+          </div>
         </header>
         <div className="desktop-content">{content}</div>
       </main>
@@ -204,13 +227,27 @@ function Workspace({
 export function App() {
   const [loading, setLoading] = useState(true);
   const [session, setSession] = useState<SessionDto | null>(null);
+  const [showOnboarding, setShowOnboarding] = useState(false);
+
+  function acceptSession(nextSession: SessionDto | null): void {
+    setSession(nextSession);
+    setShowOnboarding(
+      Boolean(
+        nextSession?.tenant && !localStorage.getItem(onboardingStorageKey(nextSession.user.id))
+      )
+    );
+  }
 
   useEffect(() => {
     void window.morubi.auth
       .getSession()
-      .then(setSession)
+      .then(acceptSession)
       .finally(() => setLoading(false));
   }, []);
+
+  useEffect(() => {
+    void window.morubi.liveCalls.setBackgroundObservation(Boolean(session));
+  }, [session]);
 
   if (loading)
     return (
@@ -219,11 +256,26 @@ export function App() {
         <span>Preparando workspace…</span>
       </div>
     );
-  if (!session) return <Login onAuthenticated={setSession} />;
+  if (!session) return <Login onAuthenticated={acceptSession} />;
+  if (session.tenant && showOnboarding)
+    return (
+      <Onboarding
+        userName={session.user.name}
+        onFinish={(ready) => {
+          localStorage.setItem(
+            onboardingStorageKey(session.user.id),
+            JSON.stringify({ completedAt: new Date().toISOString(), ready })
+          );
+          setShowOnboarding(false);
+        }}
+      />
+    );
   return (
     <Workspace
       initialSession={session}
-      onLogout={() => void window.morubi.auth.signOut().then(() => setSession(null))}
+      onSessionChange={acceptSession}
+      onRerunOnboarding={() => setShowOnboarding(true)}
+      onLogout={() => void window.morubi.auth.signOut().then(() => acceptSession(null))}
     />
   );
 }

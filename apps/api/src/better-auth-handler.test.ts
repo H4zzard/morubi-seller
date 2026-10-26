@@ -8,10 +8,11 @@ describe('trustedAuthOrigins', () => {
     DESKTOP_APP_ORIGIN: 'morubi-app://app'
   } as const;
 
-  it('allows only web and local Electron origins outside production', () => {
+  it('allows web, Vite and the packaged Electron origin outside production', () => {
     expect(trustedAuthOrigins({ ...origins, NODE_ENV: 'development' })).toEqual([
       origins.WEB_ORIGIN,
-      origins.DESKTOP_DEV_ORIGIN
+      origins.DESKTOP_DEV_ORIGIN,
+      origins.DESKTOP_APP_ORIGIN
     ]);
   });
 

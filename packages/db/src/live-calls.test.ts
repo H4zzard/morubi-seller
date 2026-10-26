@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { assertLiveSessionTransition, liveCommercialEventSource } from './live-calls.js';
+import {
+  assertLiveSessionTransition,
+  liveCommercialEventSource,
+  requiresAutomaticMeetingDetector
+} from './live-calls.js';
 
 describe('live call domain helpers', () => {
   it('allows the expected lifecycle and rejects turns after end', () => {
@@ -15,5 +19,11 @@ describe('live call domain helpers', () => {
     expect(liveCommercialEventSource('MEET')).toBe('MEET');
     expect(liveCommercialEventSource('ZOOM')).toBe('ZOOM');
     expect(liveCommercialEventSource('TEAMS')).toBe('OTHER');
+  });
+
+  it('does not require an automatic detector for explicit manual evidence', () => {
+    expect(requiresAutomaticMeetingDetector('MANUAL')).toBe(false);
+    expect(requiresAutomaticMeetingDetector('WINDOW_TITLE')).toBe(true);
+    expect(requiresAutomaticMeetingDetector(null)).toBe(true);
   });
 });

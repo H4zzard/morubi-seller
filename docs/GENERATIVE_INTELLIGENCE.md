@@ -71,7 +71,7 @@ As regras determinísticas rejeitam estratégia divergente, campos ausentes, res
 
 ## 6. Jobs, idempotência e falhas
 
-`apps/worker` é processo dedicado para `intelligence_jobs` e `generation_jobs`. A API não agenda timer nem processa IA em request. O worker descobre tenants com conexão administrativa separada e executa cada job na role runtime com `SET LOCAL` e RLS.
+`apps/worker` é processo dedicado para `intelligence_jobs` e `generation_jobs`. A API não agenda timer nem processa IA em request. O worker descobre tenants pela role mínima `morubi_worker`, que só executa o snapshot de filas, e executa cada job na role runtime `morubi_app` com `SET LOCAL` e RLS. A role administrativa não entra no processo.
 
 Claim usa `FOR UPDATE SKIP LOCKED`, tentativas limitadas, backoff e recuperação de lock abandonado. Shutdown para novos polls e espera o ciclo ativo. Logs estruturados registram profundidade aproximada, claimed/completed/failed, retries e latência sem prompt completo.
 
@@ -95,7 +95,7 @@ Preço é configuração do provider, não migration ou regra de domínio. O cus
 
 ## 9. Tenancy e segurança
 
-`generation_jobs` e `generative_executions` têm `organization_id NOT NULL`, FKs compostas tenant-consistentes, índices tenant-first e RLS `ENABLE + FORCE`. Contexto é carregado na mesma organização do job. Apenas o coordenador enumera filas com credencial administrativa; processamento de negócio usa a role restrita.
+`generation_jobs` e `generative_executions` têm `organization_id NOT NULL`, FKs compostas tenant-consistentes, índices tenant-first e RLS `ENABLE + FORCE`. Contexto é carregado na mesma organização do job. O coordenador enumera somente organizações com trabalho pendente por uma função de superfície mínima; processamento de negócio usa a role restrita.
 
 Endpoints dev exigem `intelligence.dev.inspect`. A UI exibe resumo sanitizado, estratégia, provider/model, output, validação, policy, custo e latência; isso não é exposto ao seller.
 

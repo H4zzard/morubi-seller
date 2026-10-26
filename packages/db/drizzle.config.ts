@@ -1,8 +1,8 @@
 import 'dotenv/config';
 import { defineConfig } from 'drizzle-kit';
 
-const databaseUrl = process.env.DATABASE_ADMIN_URL ?? process.env.DATABASE_URL;
-if (!databaseUrl) throw new Error('DATABASE_ADMIN_URL or DATABASE_URL is required');
+const databaseUrl = process.env.DATABASE_ADMIN_URL;
+if (!databaseUrl) throw new Error('DATABASE_ADMIN_URL is required by Drizzle Kit');
 
 export default defineConfig({
   dialect: 'postgresql',

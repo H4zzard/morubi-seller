@@ -62,6 +62,10 @@ export function liveCommercialEventSource(provider: MeetingProvider): 'MEET' | '
   return 'OTHER';
 }
 
+export function requiresAutomaticMeetingDetector(detectionEvidence: string | null): boolean {
+  return detectionEvidence !== 'MANUAL';
+}
+
 function sessionDto(row: typeof liveCallSessions.$inferSelect): LiveCallSessionDto {
   return {
     id: row.id,
@@ -133,7 +137,7 @@ export interface StartLiveCallInput {
   consentMode: 'MANUAL_CONFIRMATION' | 'ORGANIZATION_POLICY';
   policyVersion: string;
   captureMode: 'MICROPHONE' | 'SYSTEM_AUDIO' | 'MIXED' | 'FIXTURE';
-  transcriptionMode: 'REALTIME' | 'FIXTURE';
+  transcriptionMode: 'DISABLED' | 'REALTIME' | 'FIXTURE';
   captureSources: string[];
 }
 
@@ -366,13 +370,21 @@ export class LiveCallRepository {
     return this.run(async (tx) => {
       const session = await this.loadOwnedForUpdate(tx, sessionId);
       const settings = await this.settingsInTransaction(tx);
-      if (!settings.callCaptureEnabled || !settings.liveTranscriptionEnabled)
-        throw new Error('LIVE_CALLS_DISABLED');
+      if (!settings.callCaptureEnabled)
+        throw errors.conflict('A captura de calls não está habilitada para esta organização.');
+      if (input.transcriptionMode === 'REALTIME') {
+        if (!settings.liveTranscriptionEnabled) throw new Error('LIVE_TRANSCRIPTION_DISABLED');
+        if (input.consentMode !== 'MANUAL_CONFIRMATION')
+          throw new Error('LIVE_TRANSCRIPTION_EXPLICIT_CONSENT_REQUIRED');
+        if (input.policyVersion !== 'live-transcription-consent-v1')
+          throw new Error('LIVE_TRANSCRIPTION_CONSENT_VERSION_INVALID');
+      }
       if (input.consentMode === 'ORGANIZATION_POLICY' && !settings.autoStartEnabled)
         throw new Error('LIVE_AUTO_START_DISABLED');
-      if (session.provider === 'MEET' && !settings.meetDetectionEnabled)
+      const automaticallyDetected = requiresAutomaticMeetingDetector(session.detectionEvidence);
+      if (automaticallyDetected && session.provider === 'MEET' && !settings.meetDetectionEnabled)
         throw new Error('MEET_DETECTION_DISABLED');
-      if (session.provider === 'ZOOM' && !settings.zoomDetectionEnabled)
+      if (automaticallyDetected && session.provider === 'ZOOM' && !settings.zoomDetectionEnabled)
         throw new Error('ZOOM_DETECTION_DISABLED');
       assertLiveSessionTransition(session.status, 'STARTING');
       const now = new Date();
@@ -407,8 +419,18 @@ export class LiveCallRepository {
           organizationId: this.context.organizationId,
           liveCallSessionId: session.id,
           sellerMembershipId: session.sellerMembershipId,
-          provider: input.transcriptionMode === 'FIXTURE' ? 'fixture-realtime' : 'realtime',
-          model: input.transcriptionMode === 'FIXTURE' ? 'fixture-realtime-v1' : 'configured'
+          provider:
+            input.transcriptionMode === 'DISABLED'
+              ? 'capture-only'
+              : input.transcriptionMode === 'FIXTURE'
+                ? 'fixture-realtime'
+                : 'realtime',
+          model:
+            input.transcriptionMode === 'DISABLED'
+              ? 'none'
+              : input.transcriptionMode === 'FIXTURE'
+                ? 'fixture-realtime-v1'
+                : 'configured'
         })
         .onConflictDoNothing();
       return sessionDto(updated!);
@@ -514,10 +536,66 @@ export class LiveCallRepository {
     });
   }
 
+  public async recordTranscriptionUsage(
+    sessionId: string,
+    input: {
+      provider: string;
+      model: string;
+      audioProcessedSeconds: number;
+      estimatedCostMicros: bigint;
+      inputTokens?: number;
+      outputTokens?: number;
+      usageMeasurement?: 'ACTUAL' | 'ESTIMATED';
+    }
+  ): Promise<void> {
+    if (
+      !Number.isSafeInteger(input.audioProcessedSeconds) ||
+      input.audioProcessedSeconds < 0 ||
+      !Number.isSafeInteger(input.inputTokens ?? 0) ||
+      (input.inputTokens ?? 0) < 0 ||
+      !Number.isSafeInteger(input.outputTokens ?? 0) ||
+      (input.outputTokens ?? 0) < 0 ||
+      input.estimatedCostMicros < 0n
+    )
+      throw new Error('LIVE_TRANSCRIPTION_USAGE_INVALID');
+    if (
+      input.audioProcessedSeconds === 0 &&
+      input.estimatedCostMicros === 0n &&
+      (input.inputTokens ?? 0) === 0 &&
+      (input.outputTokens ?? 0) === 0
+    )
+      return;
+    await this.run(async (tx) => {
+      const session = await this.loadOwnedForUpdate(tx, sessionId);
+      if (session.status !== 'ACTIVE' && session.status !== 'ENDING')
+        throw new Error('LIVE_SESSION_NOT_ACTIVE');
+      const now = new Date();
+      await tx
+        .update(callUsage)
+        .set({
+          provider: input.provider,
+          model: input.model,
+          audioProcessedSeconds: sql`${callUsage.audioProcessedSeconds} + ${input.audioProcessedSeconds}`,
+          transcriptionInputTokens: sql`${callUsage.transcriptionInputTokens} + ${input.inputTokens ?? 0}`,
+          transcriptionOutputTokens: sql`${callUsage.transcriptionOutputTokens} + ${input.outputTokens ?? 0}`,
+          usageMeasurement: input.usageMeasurement ?? callUsage.usageMeasurement,
+          costTotalMicros: sql`${callUsage.costTotalMicros} + ${input.estimatedCostMicros}`,
+          updatedAt: now
+        })
+        .where(
+          and(
+            eq(callUsage.organizationId, this.context.organizationId),
+            eq(callUsage.liveCallSessionId, session.id)
+          )
+        );
+    });
+  }
+
   public async acceptTurn(
     sessionId: string,
     input: AcceptLiveTurnInput,
-    correlationId: string
+    correlationId: string,
+    options: { emitCommercialEvent?: boolean } = {}
   ): Promise<LiveCallTurnResultDto> {
     const persisted = await this.run(async (tx) => {
       const session = await this.loadOwnedForUpdate(tx, sessionId);
@@ -631,6 +709,13 @@ export class LiveCallRepository {
         intelligenceJobId: null,
         deduplicated: persisted.deduplicated
       };
+    if (options.emitCommercialEvent === false)
+      return {
+        turn: turnDto(persisted.turn),
+        commercialEventId: null,
+        intelligenceJobId: null,
+        deduplicated: persisted.deduplicated
+      };
     if (persisted.turn.commercialEventId)
       return {
         turn: turnDto(persisted.turn),
@@ -714,6 +799,17 @@ export class LiveCallRepository {
     return this.run(async (tx) => {
       const session = await this.loadOwnedForUpdate(tx, sessionId);
       if (session.status === 'ENDED') return sessionDto(session);
+      if (session.status === 'CANCELLED') return sessionDto(session);
+      if (session.status === 'DETECTED' || session.status === 'READY') {
+        assertLiveSessionTransition(session.status, 'CANCELLED');
+        const now = new Date();
+        const [cancelled] = await tx
+          .update(liveCallSessions)
+          .set({ status: 'CANCELLED', endedAt: now, updatedAt: now })
+          .where(eq(liveCallSessions.id, session.id))
+          .returning();
+        return sessionDto(cancelled!);
+      }
       assertLiveSessionTransition(session.status, 'ENDING');
       const now = new Date();
       const duration = session.startedAt
@@ -800,7 +896,7 @@ export class LiveCallRepository {
               eq(liveTranscriptTurns.liveCallSessionId, session.id)
             )
           )
-          .orderBy(desc(liveTranscriptTurns.sequence), desc(liveTranscriptTurns.createdAt))
+          .orderBy(desc(liveTranscriptTurns.startedAt), desc(liveTranscriptTurns.createdAt))
           .limit(100),
         tx
           .select({
@@ -844,13 +940,20 @@ export class LiveCallRepository {
               mode: consent[0].mode,
               confirmedAt: consent[0].confirmedAt.toISOString(),
               policyVersion: consent[0].policyVersion,
-              captureSources: consent[0].captureSources
+              captureSources: consent[0].captureSources,
+              transcriptionAuthorized:
+                session.transcriptionMode === 'REALTIME' &&
+                consent[0].policyVersion === 'live-transcription-consent-v1'
             }
           : null,
         turns: turns.reverse().map(turnDto),
         metrics: {
           callDurationSeconds: usageRow?.callDurationSeconds ?? 0,
           audioProcessedSeconds: usageRow?.audioProcessedSeconds ?? 0,
+          transcriptionInputTokens: usageRow?.transcriptionInputTokens ?? 0,
+          transcriptionOutputTokens: usageRow?.transcriptionOutputTokens ?? 0,
+          usageMeasurement:
+            usageRow?.usageMeasurement === 'ACTUAL' ? ('ACTUAL' as const) : ('ESTIMATED' as const),
           decisionCount: usageRow?.decisionCount ?? 0,
           generationCount: usageRow?.generationCount ?? 0,
           cardsDelivered: usageRow?.cardsDelivered ?? 0,
@@ -1078,22 +1181,27 @@ export class LiveCallRepository {
 
 export async function expireStaleLiveSessions(
   db: MorubiDatabase,
+  context: TenantContext,
   staleBefore = new Date(Date.now() - 60_000)
 ): Promise<number> {
-  const rows = await db
-    .update(liveCallSessions)
-    .set({
-      status: 'FAILED',
-      failureCode: 'HEARTBEAT_STALE',
-      endedAt: new Date(),
-      updatedAt: new Date()
-    })
-    .where(
-      and(
-        inArray(liveCallSessions.status, ['STARTING', 'ACTIVE', 'ENDING']),
-        sql`${liveCallSessions.lastHeartbeatAt} < ${staleBefore}`
+  return db.transaction(async (tx) => {
+    await setTenantContext(tx, context);
+    const rows = await tx
+      .update(liveCallSessions)
+      .set({
+        status: 'FAILED',
+        failureCode: 'HEARTBEAT_STALE',
+        endedAt: new Date(),
+        updatedAt: new Date()
+      })
+      .where(
+        and(
+          eq(liveCallSessions.organizationId, context.organizationId),
+          inArray(liveCallSessions.status, ['STARTING', 'ACTIVE', 'ENDING']),
+          sql`${liveCallSessions.lastHeartbeatAt} < ${staleBefore}`
+        )
       )
-    )
-    .returning({ id: liveCallSessions.id });
-  return rows.length;
+      .returning({ id: liveCallSessions.id });
+    return rows.length;
+  });
 }

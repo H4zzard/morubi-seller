@@ -32,15 +32,17 @@ No Windows com PowerShell restrito, use os executáveis `.cmd` (`corepack.cmd`, 
 corepack enable
 pnpm install
 cp .env.example .env
-docker compose up -d postgres
+cp apps/worker/.env.example apps/worker/.env
+docker compose up -d postgres postgres-test
 pnpm db:migrate
 ```
 
-O PostgreSQL local cria duas identidades:
+O PostgreSQL local cria três identidades restritas além da role administrativa:
 
 - `postgres`: somente migrations/administração;
 - `morubi_app`: runtime sem ownership e sem `BYPASSRLS`.
 - `morubi_auth`: runtime exclusivo do Better Auth, sem privilégios elevados e limitado às quatro tabelas de autenticação.
+- `morubi_worker`: coordenador sem acesso direto a tabelas; executa apenas o snapshot mínimo de filas.
 
 ## Desenvolvimento
 
@@ -56,6 +58,7 @@ Separadamente:
 pnpm dev:api
 pnpm dev:web
 pnpm dev:desktop
+pnpm dev:worker
 ```
 
 - Web: `http://localhost:3000`
@@ -71,7 +74,7 @@ pnpm db:seed
 pnpm db:studio
 ```
 
-`DATABASE_ADMIN_URL` executa migrations. `DATABASE_URL` usa `morubi_app` no domínio; `AUTH_DATABASE_URL` usa `morubi_auth` exclusivamente no Better Auth. O contexto tenant é aplicado com `set_config(..., true)` dentro de transações, compatível com pooling.
+`DATABASE_ADMIN_URL` é aceita somente pelos comandos de migration/administração. `DATABASE_URL` usa `morubi_app` no domínio; `AUTH_DATABASE_URL` usa `morubi_auth` exclusivamente no Better Auth; `WORKER_COORDINATOR_DATABASE_URL` usa `morubi_worker` somente para descobrir filas. O contexto tenant é aplicado com `set_config(..., true)` dentro de transações, compatível com pooling. A configuração completa está em [WORKER_RUNTIME.md](./docs/WORKER_RUNTIME.md).
 
 `db:seed` cria a organização sintética ACME, Marina como seller, Carlos, Fernanda, Projeto X/Y e duas conversas com mensagens. O seed não cria credenciais de login e não deve ser usado como identidade de produção.
 
@@ -94,9 +97,10 @@ pnpm --filter @morubi/web test:e2e
 Os testes de integração requerem PostgreSQL migrado e:
 
 ```bash
-TEST_DATABASE_ADMIN_URL=postgresql://postgres:postgres@localhost:5432/morubi
-TEST_DATABASE_URL=postgresql://morubi_app:morubi_app@localhost:5432/morubi
-TEST_AUTH_DATABASE_URL=postgresql://morubi_auth:replace-with-auth-password@localhost:5432/morubi
+TEST_DATABASE_ADMIN_URL=postgresql://postgres:postgres@localhost:5433/morubi_test
+TEST_DATABASE_URL=postgresql://morubi_app:morubi_app@localhost:5433/morubi_test
+TEST_AUTH_DATABASE_URL=postgresql://morubi_auth:morubi_auth@localhost:5433/morubi_test
+TEST_WORKER_COORDINATOR_DATABASE_URL=postgresql://morubi_worker:morubi_worker@localhost:5433/morubi_test
 ```
 
 Os testes críticos criam Organização A/B e provam isolamento em repository, RLS e API, audit append-only, invariância de owner, identidade externa por tenant, idempotência, provenance, sync inicial/incremental, retry de rate limit, partial replay e RLS forçado. A suíte de intelligence também cobre state/memory deltas, baixa confiança, contradição, override organizacional e um corpus de 55 cenários/110 eventos. O E2E web percorre auth, organização, membership, navegação por role, listas comerciais e a pendência explícita do CRM piloto.
@@ -124,3 +128,7 @@ O build local gera um diretório não assinado em `apps/desktop/release`. Distri
 ## Documentação
 
 Os documentos em [`docs/`](./docs) são a fonte de verdade. Novas decisões devem ser registradas em `docs/DECISIONS.md` antes de ampliar o escopo.
+
+- [Guia do usuário do Desktop](./docs/DESKTOP_USER_GUIDE.md): instalação, permissões, calls, privacidade e solução de problemas em linguagem de cliente.
+- [Compatibilidade do Desktop](./docs/DESKTOP_COMPATIBILITY.md): matriz real por sistema e hardware ainda pendente.
+- [Distribuição do Desktop](./docs/DESKTOP_DISTRIBUTION.md): assinatura, dependência de áudio no macOS, licença e critérios de liberação comercial.

@@ -27,7 +27,7 @@ export const callPhases = [
 export type CallPhase = (typeof callPhases)[number];
 
 export type LiveCaptureMode = 'MICROPHONE' | 'SYSTEM_AUDIO' | 'MIXED' | 'FIXTURE' | 'UNKNOWN';
-export type LiveTranscriptionMode = 'REALTIME' | 'FIXTURE';
+export type LiveTranscriptionMode = 'DISABLED' | 'REALTIME' | 'FIXTURE';
 
 export interface LiveTranscriptTurnDto {
   id: string;
@@ -54,6 +54,23 @@ export interface CallConsentDto {
   confirmedAt: string;
   policyVersion: string;
   captureSources: string[];
+  transcriptionAuthorized: boolean;
+}
+
+export interface LiveTranscriptionCapabilityDto {
+  enabled: boolean;
+  reason: 'AVAILABLE' | 'ENVIRONMENT_DISABLED' | 'ORGANIZATION_DISABLED' | 'PROVIDER_UNAVAILABLE';
+}
+
+export type LiveTranscriptionConnectionState =
+  'DISCONNECTED' | 'CONNECTING' | 'CONNECTED' | 'RECONNECTING' | 'UNSTABLE' | 'FAILED';
+
+export interface LiveTranscriptionStatusDto {
+  state: LiveTranscriptionConnectionState;
+  reconnects: number;
+  droppedChunks: number;
+  gapDetected: boolean;
+  message?: string;
 }
 
 export interface LiveCallMemoryDto {
@@ -106,6 +123,9 @@ export interface LiveCallDetailDto extends LiveCallSessionDto {
   metrics: {
     callDurationSeconds: number;
     audioProcessedSeconds: number;
+    transcriptionInputTokens: number;
+    transcriptionOutputTokens: number;
+    usageMeasurement: 'ACTUAL' | 'ESTIMATED';
     decisionCount: number;
     generationCount: number;
     cardsDelivered: number;
@@ -163,13 +183,22 @@ export interface StartLiveCallRequest {
   policyVersion?: string | undefined;
   captureMode: Exclude<LiveCaptureMode, 'UNKNOWN'>;
   transcriptionMode: LiveTranscriptionMode;
-  captureSources: Array<'LOCAL_SPEAKER' | 'REMOTE_AUDIO' | 'MIXED' | 'UNKNOWN'>;
+  captureSources: Array<
+    'LOCAL_MIC' | 'SYSTEM_AUDIO' | 'LOCAL_SPEAKER' | 'REMOTE_AUDIO' | 'MIXED' | 'UNKNOWN'
+  >;
 }
 
 export interface LiveTranscriptTurnRequest {
   clientTurnId: string;
   speakerRole: LiveSpeakerRole;
-  speakerOrigin: 'LOCAL_SPEAKER' | 'REMOTE_AUDIO' | 'MIXED' | 'UNKNOWN' | 'FIXTURE';
+  speakerOrigin:
+    | 'LOCAL_MIC'
+    | 'SYSTEM_AUDIO'
+    | 'LOCAL_SPEAKER'
+    | 'REMOTE_AUDIO'
+    | 'MIXED'
+    | 'UNKNOWN'
+    | 'FIXTURE';
   speakerConfidence: number;
   text: string;
   isPartial: boolean;
@@ -187,6 +216,25 @@ export interface LiveTranscriptTurnRequest {
 export interface LiveCallHeartbeatRequest {
   bufferedBytes?: number | undefined;
   droppedChunks?: number | undefined;
+  capturedChunks?: number | undefined;
+  sourceFailures?: number | undefined;
+  reconnects?: number | undefined;
+  sources?:
+    | Array<{
+        source: 'LOCAL_MIC' | 'SYSTEM_AUDIO';
+        state: 'IDLE' | 'STARTING' | 'ACTIVE' | 'PAUSED' | 'STOPPED' | 'FAILED';
+        chunks: number;
+        bufferedBytes: number;
+        droppedChunks: number;
+        lastChunkAt: string | null;
+        lastChunkAgeMs: number | null;
+        signalLevel: number;
+        muted: boolean;
+        failures: number;
+        deviceId: string | null;
+        deviceLabel: string | null;
+      }>
+    | undefined;
 }
 
 export interface DevLiveCallScenarioRequest {

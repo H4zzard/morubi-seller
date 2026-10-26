@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { parseApiEnv, parseWorkerEnv } from './index.js';
+import { parseApiEnv, parseDesktopEnv, parseWorkerEnv } from './index.js';
 
 const required = {
   DATABASE_URL: 'postgresql://localhost/morubi',
+  WORKER_COORDINATOR_DATABASE_URL: 'postgresql://localhost/morubi-worker',
   AUTH_DATABASE_URL: 'postgresql://localhost/morubi-auth',
   BETTER_AUTH_SECRET: 'test-secret-with-at-least-thirty-two-characters',
   BETTER_AUTH_URL: 'http://localhost:4000',
@@ -10,6 +11,15 @@ const required = {
 };
 
 describe('intelligence feature flag defaults', () => {
+  it('keeps real desktop capture and development simulators explicitly disabled', () => {
+    expect(parseDesktopEnv({})).toMatchObject({
+      MORUBI_LIVE_CAPTURE_ENABLED: false,
+      MORUBI_LIVE_DEV_SIMULATOR_ENABLED: false,
+      MORUBI_LIVE_AUDIO_BUFFER_BYTES: 4_194_304,
+      MORUBI_MEETING_OBSERVATION_INTERVAL_MS: 3_000
+    });
+  });
+
   it('requires a dedicated Better Auth database connection', () => {
     const withoutAuthDatabase = { ...required, AUTH_DATABASE_URL: undefined };
     expect(() => parseApiEnv(withoutAuthDatabase)).toThrow();
@@ -51,6 +61,27 @@ describe('intelligence feature flag defaults', () => {
     ).toBeUndefined();
     expect(() =>
       parseWorkerEnv({ ...required, GENERATIVE_AI_ENABLED: 'true', DEEPSEEK_ENABLED: 'true' })
+    ).toThrow();
+  });
+
+  it('requires a dedicated worker coordinator connection and rejects fixtures in production', () => {
+    expect(() =>
+      parseWorkerEnv({ ...required, WORKER_COORDINATOR_DATABASE_URL: undefined })
+    ).toThrow();
+    expect(
+      parseWorkerEnv({
+        ...required,
+        NODE_ENV: 'production',
+        POST_CALL_INTELLIGENCE_ENABLED: 'false'
+      }).WORKER_COORDINATOR_DATABASE_URL
+    ).toBe(required.WORKER_COORDINATOR_DATABASE_URL);
+    expect(() =>
+      parseWorkerEnv({
+        ...required,
+        NODE_ENV: 'production',
+        POST_CALL_INTELLIGENCE_ENABLED: 'true',
+        POST_CALL_PROVIDER: 'fixture'
+      })
     ).toThrow();
   });
 

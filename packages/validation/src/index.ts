@@ -153,9 +153,11 @@ export const startLiveCallSchema = z.object({
     .default('MANUAL_CONFIRMATION'),
   policyVersion: z.string().trim().min(1).max(80).default('live-consent-v1'),
   captureMode: z.enum(['MICROPHONE', 'SYSTEM_AUDIO', 'MIXED', 'FIXTURE']),
-  transcriptionMode: z.enum(['REALTIME', 'FIXTURE']),
+  transcriptionMode: z.enum(['DISABLED', 'REALTIME', 'FIXTURE']),
   captureSources: z
-    .array(z.enum(['LOCAL_SPEAKER', 'REMOTE_AUDIO', 'MIXED', 'UNKNOWN']))
+    .array(
+      z.enum(['LOCAL_MIC', 'SYSTEM_AUDIO', 'LOCAL_SPEAKER', 'REMOTE_AUDIO', 'MIXED', 'UNKNOWN'])
+    )
     .min(1)
     .max(3)
 });
@@ -164,7 +166,15 @@ export const liveTranscriptTurnSchema = z
   .object({
     clientTurnId: z.string().trim().min(1).max(160),
     speakerRole: liveSpeakerRoleSchema,
-    speakerOrigin: z.enum(['LOCAL_SPEAKER', 'REMOTE_AUDIO', 'MIXED', 'UNKNOWN', 'FIXTURE']),
+    speakerOrigin: z.enum([
+      'LOCAL_MIC',
+      'SYSTEM_AUDIO',
+      'LOCAL_SPEAKER',
+      'REMOTE_AUDIO',
+      'MIXED',
+      'UNKNOWN',
+      'FIXTURE'
+    ]),
     speakerConfidence: z.number().min(0).max(1),
     text: z.string().trim().min(1).max(4_000),
     isPartial: z.boolean(),
@@ -189,12 +199,39 @@ export const liveTranscriptTurnSchema = z
 
 export const liveCallHeartbeatSchema = z.object({
   bufferedBytes: z.number().int().min(0).max(67_108_864).default(0),
-  droppedChunks: z.number().int().min(0).max(1_000_000).default(0)
+  droppedChunks: z.number().int().min(0).max(1_000_000).default(0),
+  capturedChunks: z.number().int().min(0).max(100_000_000).default(0),
+  sourceFailures: z.number().int().min(0).max(1_000_000).default(0),
+  reconnects: z.number().int().min(0).max(1_000_000).default(0),
+  sources: z
+    .array(
+      z.object({
+        source: z.enum(['LOCAL_MIC', 'SYSTEM_AUDIO']),
+        state: z.enum(['IDLE', 'STARTING', 'ACTIVE', 'PAUSED', 'STOPPED', 'FAILED']),
+        chunks: z.number().int().min(0).max(100_000_000),
+        bufferedBytes: z.number().int().min(0).max(67_108_864),
+        droppedChunks: z.number().int().min(0).max(1_000_000),
+        lastChunkAt: z.iso.datetime().nullable(),
+        lastChunkAgeMs: z.number().int().min(0).max(86_400_000).nullable(),
+        signalLevel: z.number().min(0).max(1),
+        muted: z.boolean(),
+        failures: z.number().int().min(0).max(1_000_000),
+        deviceId: z.string().max(512).nullable(),
+        deviceLabel: z.string().max(240).nullable()
+      })
+    )
+    .max(2)
+    .default([])
 });
 
 export const liveCallWindowModeSchema = z.object({
   compact: z.boolean(),
   alwaysOnTop: z.boolean().default(false)
+});
+
+export const systemAudioAuthorizationSchema = z.object({
+  sessionId: uuidSchema,
+  sourceId: z.string().trim().min(1).max(512)
 });
 
 export const liveCallSettingsSchema = z.object({

@@ -6,12 +6,18 @@
   "private": true,
   "type": "module",
   "main": "./out/main/index.js",
+  "dependencies": {
+    "ws": "8.18.3"
+  },
   "scripts": {
-    "build": "electron-vite build && electron-builder --dir",
+    "build": "node scripts/build-native-audio.mjs && electron-vite build && electron-builder --dir",
     "build:app": "electron-vite build",
-    "dev": "electron-vite dev",
+    "build:mac:test": "node scripts/build-native-audio.mjs && electron-vite build && node scripts/build-mac-test.mjs",
+    "build:mac:test:adhoc": "node scripts/build-native-audio.mjs && electron-vite build && electron-builder --mac dir --x64 -c.mac.identity=- -c.mac.hardenedRuntime=false",
+    "build:mac:dist": "node scripts/build-native-audio.mjs && electron-vite build && electron-builder --mac dmg --x64 --arm64",
+    "dev": "node scripts/run-electron-vite.mjs dev",
     "lint": "eslint src e2e electron.vite.config.ts playwright.config.ts",
-    "preview": "electron-vite preview",
+    "preview": "node scripts/run-electron-vite.mjs preview",
     "test": "vitest run src",
     "test:e2e": "playwright test",
     "typecheck": "tsc -p tsconfig.json --noEmit"
@@ -31,6 +37,7 @@
     "@types/node": "24.10.1",
     "@types/react": "19.2.14",
     "@types/react-dom": "19.2.3",
+    "@types/ws": "8.18.1",
     "@vitejs/plugin-react": "5.2.0",
     "electron": "44.5.1",
     "electron-builder": "26.15.3",
@@ -65,11 +72,22 @@
       ]
     },
     "mac": {
+      "category": "public.app-category.business",
+      "icon": "build/icon.icns",
+      "minimumSystemVersion": "12.0.0",
       "target": [
         "dmg"
       ],
+      "extraResources": [
+        {
+          "from": "native/macos-audio-engine/build/morubi-audio-engine",
+          "to": "native/morubi-audio-engine"
+        }
+      ],
       "extendInfo": {
-        "NSMicrophoneUsageDescription": "O Morubi usa o microfone somente após sua confirmação para produzir transcrição e orientações durante uma call."
+        "NSAudioCaptureUsageDescription": "O Morubi acessa áudio somente após sua confirmação para acompanhar uma reunião.",
+        "NSMicrophoneUsageDescription": "O Morubi usa seu microfone somente após sua confirmação para acompanhar uma reunião.",
+        "NSScreenCaptureUsageDescription": "O Morubi usa Gravação da Tela somente para receber o áudio reproduzido por outros aplicativos e, opcionalmente, detectar reuniões. Nenhuma imagem é capturada ou armazenada."
       }
     },
     "linux": {

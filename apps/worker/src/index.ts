@@ -6,7 +6,7 @@ import { MorubiWorkerService, type WorkerLogger } from './service.js';
 
 const env = parseWorkerEnv(process.env);
 const database = createDatabase(env.DATABASE_URL);
-const coordinatorDatabase = createDatabase(env.DATABASE_ADMIN_URL ?? env.DATABASE_URL);
+const coordinatorDatabase = createDatabase(env.WORKER_COORDINATOR_DATABASE_URL);
 const logger: WorkerLogger = {
   info(value, message) {
     if (env.LOG_LEVEL !== 'silent')

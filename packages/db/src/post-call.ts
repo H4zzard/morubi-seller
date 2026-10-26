@@ -32,12 +32,17 @@ import {
   realtimeEvents
 } from './schema.js';
 import { setTenantContext } from './tenant.js';
+import {
+  jobFailureIsTerminal,
+  sanitizeJobErrorCode,
+  type JobFailureOutcome
+} from './job-failure.js';
 
 type DatabaseTransaction = Parameters<Parameters<MorubiDatabase['transaction']>[0]>[0];
 export type PostCallJob = typeof postCallJobs.$inferSelect;
 
 function safeErrorCode(error: unknown): string {
-  return (error instanceof Error ? error.message : 'UNKNOWN').slice(0, 80);
+  return sanitizeJobErrorCode(error);
 }
 
 function countEvidence(content: PostCallReportContent): number {
@@ -213,7 +218,7 @@ export class PostCallJobRepository {
     });
   }
 
-  public async fail(job: PostCallJob, error: unknown): Promise<void> {
+  public async fail(job: PostCallJob, error: unknown): Promise<JobFailureOutcome> {
     const errorCode = safeErrorCode(error);
     if (errorCode === 'POST_CALL_TRANSCRIPT_STALE') {
       await this.finish(job.id, {
@@ -234,9 +239,9 @@ export class PostCallJobRepository {
             )
           );
       });
-      return;
+      return { terminal: true, errorCode };
     }
-    const terminal = job.attempts >= job.maxAttempts;
+    const terminal = jobFailureIsTerminal(job, error);
     await this.finish(job.id, {
       status: terminal ? 'FAILED' : 'RETRY',
       availableAt: new Date(Date.now() + Math.min(120_000, 2_000 * 2 ** job.attempts)),
@@ -280,6 +285,7 @@ export class PostCallJobRepository {
         });
       });
     }
+    return { terminal, errorCode };
   }
 
   private async finish(

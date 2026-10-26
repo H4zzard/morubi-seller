@@ -15,5 +15,10 @@ release/
 apps/desktop/.vite/
 apps/desktop/test-results/
 apps/desktop/playwright-report/
+apps/desktop/native/macos-audio-engine/build/
 apps/web/test-results/
 apps/web/playwright-report/
+
+# Local development toolchains (not project source)
+.tools/
+.tmp-bin/

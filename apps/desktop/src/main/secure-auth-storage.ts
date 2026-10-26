@@ -15,9 +15,15 @@ export class SecureAuthStorage {
   readonly #filePath = join(app.getPath('userData'), 'auth-state.bin');
 
   public async read(): Promise<StoredAuthState | null> {
+    let encrypted: Buffer;
+    try {
+      encrypted = await readFile(this.#filePath);
+    } catch {
+      return null;
+    }
+
     if (!safeStorage.isEncryptionAvailable()) return null;
     try {
-      const encrypted = await readFile(this.#filePath);
       const decrypted = safeStorage.decryptString(encrypted);
       const parsed = JSON.parse(decrypted) as unknown;
       if (!isRecord(parsed) || typeof parsed.cookie !== 'string') return null;

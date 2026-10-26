@@ -7,11 +7,10 @@ import type { SessionResolver } from './types.js';
 
 export function trustedAuthOrigins(
   env: Pick<ApiEnv, 'NODE_ENV' | 'WEB_ORIGIN' | 'DESKTOP_DEV_ORIGIN' | 'DESKTOP_APP_ORIGIN'>
-): [string, string] {
-  return [
-    env.WEB_ORIGIN,
-    env.NODE_ENV === 'production' ? env.DESKTOP_APP_ORIGIN : env.DESKTOP_DEV_ORIGIN
-  ];
+): string[] {
+  return env.NODE_ENV === 'production'
+    ? [env.WEB_ORIGIN, env.DESKTOP_APP_ORIGIN]
+    : [env.WEB_ORIGIN, env.DESKTOP_DEV_ORIGIN, env.DESKTOP_APP_ORIGIN];
 }
 
 function copyResponseHeaders(

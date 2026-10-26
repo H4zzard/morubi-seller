@@ -17,6 +17,7 @@ import {
   TranscriptionProcessor,
   IntelligenceReadRepository,
   aiDecisions,
+  aiUsage,
   audioTranscripts,
   commercialEvents,
   createDatabase,
@@ -30,6 +31,7 @@ import {
   memberships,
   memoryFacts,
   organizations,
+  postCallJobs,
   resolveTenantContext,
   syntheticWavFixture,
   type DatabaseHandle
@@ -306,21 +308,75 @@ describe('intelligence engine PostgreSQL flow', () => {
     const jobs = new GenerationJobRepository(runtime.db, contextA);
     const job = await jobs.claimNext();
     expect(job?.candidateId).toBeTruthy();
+    const [postCallCountBefore] = await admin.db
+      .select({ value: count() })
+      .from(postCallJobs)
+      .where(eq(postCallJobs.organizationId, organizationAId));
+    const failingProcessor = new GenerativeProcessor(
+      runtime.db,
+      contextA,
+      new FixtureGenerativeProvider('FAILURE'),
+      {
+        generativeAiEnabled: true,
+        pricing: { inputMicrosPerMillionTokens: 0n, outputMicrosPerMillionTokens: 0n },
+        maxValidationRetries: 1
+      }
+    );
+    const generationError = await failingProcessor.process(job!).then(
+      () => null,
+      (error: unknown) => error
+    );
+    expect(generationError).toBeInstanceOf(Error);
+    expect(await jobs.fail(job!, generationError)).toEqual({
+      terminal: false,
+      errorCode: 'FIXTURE_500'
+    });
+    const [failedJob] = await admin.db
+      .select()
+      .from(generationJobs)
+      .where(eq(generationJobs.id, job!.id));
+    expect(failedJob).toMatchObject({ status: 'PENDING', attempts: 1, errorCode: 'FIXTURE_500' });
+    const [failedExecution] = await admin.db
+      .select()
+      .from(generativeExecutions)
+      .where(eq(generativeExecutions.generationJobId, job!.id));
+    expect(failedExecution).toMatchObject({ status: 'PROVIDER_FAILED', attemptCount: 1 });
+    const [failedUsage] = await admin.db
+      .select()
+      .from(aiUsage)
+      .where(eq(aiUsage.generativeExecutionId, failedExecution!.id));
+    expect(failedUsage).toMatchObject({
+      purpose: 'GENERATION',
+      success: false,
+      retryCount: 0,
+      errorCode: 'FIXTURE_500'
+    });
+    const [postCallCountAfter] = await admin.db
+      .select({ value: count() })
+      .from(postCallJobs)
+      .where(eq(postCallJobs.organizationId, organizationAId));
+    expect(postCallCountAfter!.value).toBe(postCallCountBefore!.value);
+    await admin.db
+      .update(generationJobs)
+      .set({ availableAt: new Date(0) })
+      .where(eq(generationJobs.id, job!.id));
+    const retryJob = await jobs.claimNext();
+    expect(retryJob).toMatchObject({ id: job!.id, status: 'RUNNING', attempts: 2 });
     const generativeProvider = new FixtureGenerativeProvider();
     const generativeProcessor = new GenerativeProcessor(runtime.db, contextA, generativeProvider, {
       generativeAiEnabled: true,
       pricing: { inputMicrosPerMillionTokens: 0n, outputMicrosPerMillionTokens: 0n },
       maxValidationRetries: 1
     });
-    const generated = await generativeProcessor.process(job!);
+    const generated = await generativeProcessor.process(retryJob!);
     expect(generated).toMatchObject({ eligibleForDelivery: true, reason: 'GENERATED' });
-    const replay = await generativeProcessor.process(job!);
+    const replay = await generativeProcessor.process(retryJob!);
     expect(replay).toMatchObject({ deduplicated: true, executionId: generated.executionId });
     expect(generativeProvider.calls).toBe(1);
-    await jobs.complete(job!.id);
+    await jobs.complete(retryJob!.id);
     const delivered = await new CopilotRepository(runtime.db, contextA).deliverDecision(
       generated.decisionId,
-      job!.correlationId,
+      retryJob!.correlationId,
       null
     );
     expect(delivered.delivery?.status).toBe('DELIVERED');
@@ -329,7 +385,12 @@ describe('intelligence engine PostgreSQL flow', () => {
         .select()
         .from(generativeExecutions)
         .where(eq(generativeExecutions.id, generated.executionId!))
-    ).toHaveLength(1);
+    ).toMatchObject([{ status: 'COMPLETED', attemptCount: 2 }]);
+    const [recoveredUsage] = await admin.db
+      .select()
+      .from(aiUsage)
+      .where(eq(aiUsage.generativeExecutionId, generated.executionId!));
+    expect(recoveredUsage).toMatchObject({ success: true, retryCount: 1, errorCode: null });
   });
 
   it('does not expose seller-targeted realtime events to another tenant', async () => {
@@ -520,9 +581,7 @@ describe('intelligence engine PostgreSQL flow', () => {
     const [stateBefore] = await admin.db
       .select({ version: dealStates.version })
       .from(dealStates)
-      .where(
-        and(eq(dealStates.organizationId, organizationAId), eq(dealStates.dealId, dealAId))
-      );
+      .where(and(eq(dealStates.organizationId, organizationAId), eq(dealStates.dealId, dealAId)));
     const event = await service.ingestCommercialEvent(
       source('event-budget-8000', '2026-10-07T11:00:00Z'),
       {

@@ -66,7 +66,48 @@ describe('meeting detection', () => {
       detector.detect({ url: 'https://meet.google.com.evil.test/a', observedAt: new Date() })
     ).toBeNull();
     expect(detector.detect({ windowTitle: 'Quarterly report', observedAt: new Date() })).toBeNull();
+    expect(
+      detector.detect({
+        processName: 'chrome',
+        windowTitle: 'Google Meet Help - Google Chrome',
+        visible: true,
+        observedAt: new Date()
+      })
+    ).toBeNull();
+    expect(
+      detector.detect({
+        processName: 'notepad',
+        windowTitle: 'Google Meet - abc-defg-hij',
+        visible: true,
+        observedAt: new Date()
+      })
+    ).toBeNull();
     expect(new FixtureMeetingDetector().detect('MEET')).toMatchObject({ confidence: 1 });
+  });
+
+  it('reports a visible Meet title in Chrome or Edge as requiring manual confirmation', () => {
+    const detector = new MeetingDetector();
+    expect(
+      detector.detect({
+        processName: 'chrome',
+        windowTitle: 'Meet - abc-defg-hij - Google Chrome',
+        visible: true,
+        observedAt: new Date()
+      })
+    ).toMatchObject({
+      provider: 'MEET',
+      evidence: 'WINDOW_TITLE',
+      confirmationRequired: true,
+      active: true
+    });
+    expect(
+      detector.detect({
+        processName: 'msedge',
+        windowTitle: 'Email - Microsoft Edge',
+        visible: true,
+        observedAt: new Date()
+      })
+    ).toBeNull();
   });
 });
 

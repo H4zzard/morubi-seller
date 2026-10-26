@@ -9,7 +9,11 @@ test('login, tenant session, restart persistence, logout and subsequent login', 
   const unique = crypto.randomUUID();
   const email = `desktop-${unique}@example.test`;
   const password = `Desktop-${unique}`;
-  const browser = await playwright.chromium.launch();
+  const browser = await playwright.chromium.launch({
+    ...(process.env.MORUBI_CHROMIUM_EXECUTABLE_PATH
+      ? { executablePath: process.env.MORUBI_CHROMIUM_EXECUTABLE_PATH }
+      : {})
+  });
   const web = await browser.newPage();
   await web.goto('http://localhost:3000/signup');
   await web.getByLabel('Nome').fill('Desktop E2E');
@@ -52,6 +56,10 @@ test('login, tenant session, restart persistence, logout and subsequent login', 
     await window.getByLabel('Email').fill(email);
     await window.getByLabel('Senha').fill(password);
     await window.getByRole('button', { name: 'Entrar' }).click();
+    await expect(
+      window.getByRole('heading', { name: 'Vamos preparar o Morubi para suas reuniões.' })
+    ).toBeVisible();
+    await window.getByRole('button', { name: 'Fazer depois' }).click();
     await expect(window.getByText('API conectada')).toBeVisible();
     await expect(window.getByText('Desktop E2E')).toBeVisible();
 

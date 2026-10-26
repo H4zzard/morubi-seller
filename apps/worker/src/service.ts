@@ -20,6 +20,7 @@ import {
   TranscriptionJobRepository,
   TranscriptionProcessor,
   listWorkerQueues,
+  sanitizeJobErrorCode,
   expireStaleLiveSessions,
   resolveIntelligenceConfig,
   workerTenantContext,
@@ -27,6 +28,7 @@ import {
 } from '@morubi/db';
 import { FixtureDecisionProvider } from '@morubi/intelligence';
 import { LocalObjectStorage } from '@morubi/storage';
+import { failGenerationJob, failPostCallJob } from './job-failure.js';
 
 export interface WorkerLogger {
   info(value: Record<string, unknown>, message: string): void;
@@ -52,10 +54,6 @@ export class MorubiWorkerService {
   }
 
   public async cycle(): Promise<void> {
-    if (this.env.LIVE_CALLS_ENABLED) {
-      const expired = await expireStaleLiveSessions(this.coordinatorDatabase.db);
-      if (expired) this.log.info({ expired }, 'Stale live call sessions closed');
-    }
     const queues = await listWorkerQueues(this.coordinatorDatabase.db);
     this.log.info(
       {
@@ -76,9 +74,17 @@ export class MorubiWorkerService {
     for (const queue of queues) {
       if (remaining <= 0) break;
       const context = workerTenantContext(queue.organizationId);
+      if (this.env.LIVE_CALLS_ENABLED && queue.staleLiveSessions > 0) {
+        const expired = await expireStaleLiveSessions(this.database.db, context);
+        if (expired)
+          this.log.info(
+            { organizationId: context.organizationId, expired },
+            'Stale live call sessions closed'
+          );
+      }
       if (this.env.AUDIO_INTELLIGENCE_ENABLED) {
         const purged = await new AudioAssetService(
-          this.coordinatorDatabase.db,
+          this.database.db,
           context,
           this.audioStorage,
           {
@@ -298,16 +304,7 @@ export class MorubiWorkerService {
       );
       return true;
     } catch (error) {
-      await new PostCallProcessor(this.database.db, context, this.postCallProvider, {
-        enabled: true,
-        maxSegmentCharacters: this.env.POST_CALL_MAX_SEGMENT_CHARACTERS,
-        maxOutputCharacters: this.env.POST_CALL_MAX_OUTPUT_CHARACTERS,
-        pricing: {
-          inputMicrosPerMillionTokens: this.env.DEEPSEEK_INPUT_COST_MICROS_PER_MILLION_TOKENS,
-          outputMicrosPerMillionTokens: this.env.DEEPSEEK_OUTPUT_COST_MICROS_PER_MILLION_TOKENS
-        }
-      }).recordFailure(job, error, performance.now() - startedAt);
-      await jobs.fail(job, error);
+      const failure = await failGenerationJob(jobs, job, error);
       this.log.error(
         {
           jobType: 'GENERATION',
@@ -315,8 +312,8 @@ export class MorubiWorkerService {
           correlationId: job.correlationId,
           jobId: job.id,
           attempts: job.attempts,
-          terminal: job.attempts >= job.maxAttempts,
-          errorCode: error instanceof Error ? error.name : 'UNKNOWN'
+          terminal: failure.terminal,
+          errorCode: failure.errorCode
         },
         'Worker job failed'
       );
@@ -369,16 +366,53 @@ export class MorubiWorkerService {
     const job = await jobs.claimNext();
     if (!job) return false;
     const startedAt = performance.now();
+    const processor = new PostCallProcessor(this.database.db, context, this.postCallProvider, {
+      enabled: true,
+      maxSegmentCharacters: this.env.POST_CALL_MAX_SEGMENT_CHARACTERS,
+      maxOutputCharacters: this.env.POST_CALL_MAX_OUTPUT_CHARACTERS,
+      pricing: {
+        inputMicrosPerMillionTokens: this.env.DEEPSEEK_INPUT_COST_MICROS_PER_MILLION_TOKENS,
+        outputMicrosPerMillionTokens: this.env.DEEPSEEK_OUTPUT_COST_MICROS_PER_MILLION_TOKENS
+      }
+    });
     try {
-      const result = await new PostCallProcessor(this.database.db, context, this.postCallProvider, {
-        enabled: true,
-        maxSegmentCharacters: this.env.POST_CALL_MAX_SEGMENT_CHARACTERS,
-        maxOutputCharacters: this.env.POST_CALL_MAX_OUTPUT_CHARACTERS,
-        pricing: {
-          inputMicrosPerMillionTokens: this.env.DEEPSEEK_INPUT_COST_MICROS_PER_MILLION_TOKENS,
-          outputMicrosPerMillionTokens: this.env.DEEPSEEK_OUTPUT_COST_MICROS_PER_MILLION_TOKENS
+      let result: Awaited<ReturnType<PostCallProcessor['process']>>;
+      try {
+        result = await processor.process(job);
+      } catch (error) {
+        const failed = await failPostCallJob(
+          jobs,
+          processor,
+          job,
+          error,
+          performance.now() - startedAt
+        );
+        if (failed.telemetryFailure) {
+          this.log.error(
+            {
+              jobType: 'POST_CALL_ANALYSIS',
+              organizationId: context.organizationId,
+              correlationId: job.correlationId,
+              jobId: job.id,
+              errorCode: sanitizeJobErrorCode(failed.telemetryFailure.error)
+            },
+            'Worker job failure telemetry could not be persisted'
+          );
         }
-      }).process(job);
+        this.log.error(
+          {
+            jobType: 'POST_CALL_ANALYSIS',
+            organizationId: context.organizationId,
+            correlationId: job.correlationId,
+            jobId: job.id,
+            attempts: job.attempts,
+            terminal: failed.failure.terminal,
+            errorCode: failed.failure.errorCode
+          },
+          'Worker job failed'
+        );
+        return true;
+      }
       await jobs.complete(job.id);
       this.log.info(
         {
@@ -394,7 +428,7 @@ export class MorubiWorkerService {
         'Worker job completed'
       );
     } catch (error) {
-      await jobs.fail(job, error);
+      const failure = await jobs.fail(job, error);
       this.log.error(
         {
           jobType: 'POST_CALL_ANALYSIS',
@@ -402,8 +436,8 @@ export class MorubiWorkerService {
           correlationId: job.correlationId,
           jobId: job.id,
           attempts: job.attempts,
-          terminal: job.attempts >= job.maxAttempts,
-          errorCode: error instanceof Error ? error.name : 'UNKNOWN'
+          terminal: failure.terminal,
+          errorCode: failure.errorCode
         },
         'Worker job failed'
       );

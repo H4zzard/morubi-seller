@@ -13,3 +13,4 @@ export * from './tenant.js';
 export * from './audio.js';
 export * from './live-calls.js';
 export * from './post-call.js';
+export * from './job-failure.js';

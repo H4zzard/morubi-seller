@@ -1,3 +1,5 @@
+export * from './audio-transport.js';
+
 export const meetingProviders = ['MEET', 'ZOOM', 'TEAMS', 'UNKNOWN'] as const;
 export type MeetingProvider = (typeof meetingProviders)[number];
 
@@ -22,9 +24,12 @@ export const callPhases = [
 export type CallPhase = (typeof callPhases)[number];
 
 export interface MeetingObservation {
+  processId?: number;
   processName?: string;
+  applicationName?: string;
   windowTitle?: string;
   url?: string;
+  visible?: boolean;
   observedAt: Date;
 }
 
@@ -35,6 +40,7 @@ export interface MeetingDetection {
   confidence: number;
   active: boolean;
   evidence: 'URL_HOST' | 'PROCESS_NAME' | 'WINDOW_TITLE' | 'FIXTURE';
+  confirmationRequired: boolean;
   observedAt: Date;
 }
 
@@ -52,6 +58,29 @@ function meetingIdFromPath(pathname: string): string | null {
   return candidate && /^[a-z0-9-]{3,120}$/i.test(candidate) ? candidate : null;
 }
 
+const meetBrowserProcesses = new Set(['chrome', 'chrome.exe', 'msedge', 'msedge.exe']);
+
+function looksLikeActiveMeetTitle(observation: MeetingObservation): boolean {
+  const process = normalized(observation.processName);
+  if (!meetBrowserProcesses.has(process) || observation.visible === false) return false;
+  const title = normalized(observation.windowTitle).replace(
+    /\s+[-–—]\s+(google chrome|microsoft edge)$/u,
+    ''
+  );
+  if (!title) return false;
+  if (
+    /google search|search results|help|support|download|wikipedia|youtube|calendar|gmail/u.test(
+      title
+    )
+  )
+    return false;
+  return (
+    /^google meet(?:\s+[-–—|]\s+.+)?$/u.test(title) ||
+    /^meet\s+[-–—|]\s+(?:[a-z]{3}-[a-z]{4}-[a-z]{3}|.+)$/u.test(title) ||
+    /\b[a-z]{3}-[a-z]{4}-[a-z]{3}\b.*\bgoogle meet\b/u.test(title)
+  );
+}
+
 export class MeetMeetingAdapter implements MeetingProviderAdapter {
   public readonly provider = 'MEET' as const;
 
@@ -67,6 +96,7 @@ export class MeetMeetingAdapter implements MeetingProviderAdapter {
             confidence: 0.98,
             active: true,
             evidence: 'URL_HOST',
+            confirmationRequired: false,
             observedAt: observation.observedAt
           };
         }
@@ -74,15 +104,15 @@ export class MeetMeetingAdapter implements MeetingProviderAdapter {
         return null;
       }
     }
-    const title = normalized(observation.windowTitle);
-    if (title.includes('google meet') || title.includes('meet.google.com')) {
+    if (looksLikeActiveMeetTitle(observation)) {
       return {
         provider: this.provider,
         externalId: null,
         title: observation.windowTitle?.slice(0, 240) ?? null,
-        confidence: 0.72,
+        confidence: 0.68,
         active: true,
         evidence: 'WINDOW_TITLE',
+        confirmationRequired: true,
         observedAt: observation.observedAt
       };
     }
@@ -103,6 +133,7 @@ export class ZoomMeetingAdapter implements MeetingProviderAdapter {
         confidence: 0.9,
         active: true,
         evidence: 'PROCESS_NAME',
+        confirmationRequired: true,
         observedAt: observation.observedAt
       };
     }
@@ -120,6 +151,7 @@ export class ZoomMeetingAdapter implements MeetingProviderAdapter {
             confidence: 0.95,
             active: true,
             evidence: 'URL_HOST',
+            confirmationRequired: false,
             observedAt: observation.observedAt
           };
         }
@@ -158,13 +190,29 @@ export class FixtureMeetingDetector {
       confidence: 1,
       active: true,
       evidence: 'FIXTURE',
+      confirmationRequired: false,
       observedAt: now
     };
   }
 }
 
-export type AudioSource = 'LOCAL_SPEAKER' | 'REMOTE_AUDIO' | 'MIXED' | 'UNKNOWN';
+export type AudioSource =
+  'LOCAL_MIC' | 'SYSTEM_AUDIO' | 'LOCAL_SPEAKER' | 'REMOTE_AUDIO' | 'MIXED' | 'UNKNOWN';
 export type CaptureHealth = 'IDLE' | 'STARTING' | 'ACTIVE' | 'PAUSED' | 'STOPPED' | 'FAILED';
+
+export interface AudioCaptureSourceMetrics {
+  source: Extract<AudioSource, 'LOCAL_MIC' | 'SYSTEM_AUDIO'>;
+  state: CaptureHealth;
+  chunks: number;
+  bufferedBytes: number;
+  droppedChunks: number;
+  lastChunkAt: Date | null;
+  signalLevel: number;
+  muted: boolean;
+  failures: number;
+  deviceId: string | null;
+  deviceLabel: string | null;
+}
 
 export interface LiveAudioChunk {
   id: string;
@@ -340,10 +388,21 @@ export interface RealtimeTranscriptionStream {
   close(): Promise<void>;
 }
 
+export interface RealtimeTranscriptionUsageSnapshot {
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  measurement: 'ACTUAL';
+}
+
 export interface RealtimeTranscriptionProvider {
   readonly metadata: { provider: string; model: string; configVersion: string };
   open(
-    input: { sessionId: string; language?: string },
+    input: {
+      sessionId: string;
+      language?: string;
+      onUsage?: (usage: RealtimeTranscriptionUsageSnapshot) => void;
+    },
     onTurn: (turn: RealtimeTranscriptTurn) => void
   ): Promise<RealtimeTranscriptionStream>;
 }

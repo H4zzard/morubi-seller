@@ -604,6 +604,30 @@ ADRs simplificados. `MANDATED` deriva diretamente do brief; `PROPOSED` requer va
 - **Decisão:** compactar/redimensionar a janela Electron existente, com always-on-top opt-in e sem transcript.
 - **Consequência:** evita overlay privilegiado adicional e reduz exposição visual durante a call.
 
+## DEC-098 — Áudio do sistema no macOS usa helper nativo isolado
+
+- **Status:** ACCEPTED para macOS 13+; validação de distribuição OPEN
+- **Decisão:** manter o contrato compartilhado de `AudioCapture`, usando ScreenCaptureKit audio-only em helper Swift autenticado no macOS 13+, sem output de vídeo, driver ou troca da saída padrão. BlackHole permanece fallback, não dependência distribuída.
+- **Consequência:** Ventura exige a permissão denominada Gravação da Tela; Monterey continua bloqueado por licenciamento/distribuição de componente virtual. Process Tap de 14.2+ pode virar outro adapter após validação, sem alterar renderer, domínio ou `LiveCallSession`.
+
+## DEC-099 — STT live usa transporte binário backend-controlled
+
+- **Status:** ACCEPTED em código; validação real bloqueada por credencial
+- **Decisão:** normalizar as duas fontes para PCM s16le 16 kHz mono/100 ms no Desktop e enviá-las separadamente por WebSocket binário autenticado. Sessão, consentimento, tenant, ownership, limites, provider e persistência continuam decididos pela API.
+- **Consequência:** nenhuma chave chega ao Electron; ACK, sequence, buffer limitado e reconnect controlam pressão e replay. WSS é obrigatório fora de localhost.
+
+## DEC-100 — Gemini Live é o primeiro provider realtime
+
+- **Status:** ACCEPTED para validação
+- **Decisão:** implementar somente Gemini Live Transcription atrás de `RealtimeTranscriptionProvider`, com um stream por fonte e renovação aos nove minutos. Não implementar Deepgram preventivamente.
+- **Consequência:** interim/final e usage podem ser validados sem misturar speakers. O provider não diariza `SYSTEM_AUDIO`; múltiplos remotos permanecem não identificados. Credencial, DPA/região, precisão, latência e custo faturado ainda são gates externos.
+
+## DEC-101 — STT não aciona inteligência na Fase 9.6
+
+- **Status:** ACCEPTED
+- **Decisão:** persistir somente finais consentidos via `live_transcript_turns` com `emitCommercialEvent=false`; interims ficam em memória/UI e áudio bruto nunca é persistido.
+- **Consequência:** a Fase 9.6 valida transcrição sem iniciar CommercialEvent, DeepSeek, coaching ou pós-call. Purga/exclusão autorizada de finais live permanece gate antes de habilitar retenção em produção.
+
 # ADR-009 — Relatórios pós-call revisionados
 
 Decisão: separar identidade (`call_reports`) de conteúdo imutável (`call_report_revisions`) e usar uma fila PostgreSQL idempotente (`post_call_jobs`). Motivo: retry, auditoria e reprocessamento não podem sobrescrever uma conclusão anterior.
@@ -615,3 +639,9 @@ Decisão: toda afirmação factual cita turnos válidos; fatos sem evidência s�
 # ADR-011 — Abstração generativa compartilhada
 
 Decisão: ampliar `GenerativeProvider` com `POST_CALL_ANALYSIS`, mantendo fixture sem egress e DeepSeek sob feature flag. Motivo: centralizar timeout, circuit breaker, metadados de modelo e custo sem acoplar domínio ao fornecedor.
+
+# ADR-012 — Coordenação do Worker sem role administrativa
+
+Decisão: separar `morubi_worker`, que só executa uma função `SECURITY DEFINER` de snapshot das filas, de `morubi_app`, que processa cada tenant com RLS. `DATABASE_ADMIN_URL` fica restrita ao passo de migrations/administração.
+
+Motivo: descoberta multi-tenant não deve entregar ao processo permanente credenciais de owner, superuser ou `BYPASSRLS`; claims, efeitos e recuperação continuam protegidos por contexto tenant.

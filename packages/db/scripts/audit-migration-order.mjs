@@ -92,11 +92,11 @@ function inspectStatement(statement, context) {
   }
 
   for (const match of statement.matchAll(
-    /ALTER\s+TABLE\s+(?:"public"\.)?"([^"]+)"\s+DROP\s+CONSTRAINT\s+"([^"]+)"/gi
+    /ALTER\s+TABLE\s+(?:"public"\.)?"([^"]+)"\s+DROP\s+CONSTRAINT\s+(IF\s+EXISTS\s+)?"([^"]+)"/gi
   )) {
-    const key = objectKey(match[1], match[2]);
-    if (!constraints.delete(key))
-      errors.push(`${context}: DROP CONSTRAINT references missing ${key}`);
+    const key = objectKey(match[1], match[3]);
+    const existed = constraints.delete(key);
+    if (!existed && !match[2]) errors.push(`${context}: DROP CONSTRAINT references missing ${key}`);
   }
 
   for (const match of statement.matchAll(

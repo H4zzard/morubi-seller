@@ -299,7 +299,7 @@ Antes de produção, faltam secrets manager real, provider/OAuth, worker duráve
 ## Live Calls (Fase 8)
 
 - Detecção não autoriza captura. Start exige consentimento persistido; auto-start e todos os gates live começam desligados.
-- Microfone real usa `getUserMedia` e uma autorização do Electron main que é audio-only, single-use, expira em 30 segundos e é invalidada em crash/close.
+- Microfone real usa `getUserMedia` e uma autorização do Electron main que é audio-only, single-use e expira em 30 segundos. Grants são invalidados no consumo, logout, encerramento explícito, falha/crash ou troca de sessão; ocultar a janela não revoga uma captura já autorizada.
 - O renderer não recebe cookie/token nem acesso genérico de mídia. Vídeo e outro `webContents` são negados.
 - Áudio bruto live fica em buffer limitado na memória e retenção default é zero. Partial não entra no pipeline de inteligência.
 - Transcript é conteúdo não confiável; geração mantém sanitização, validação, policy e staleness existentes.
@@ -309,3 +309,13 @@ Antes de produção, faltam secrets manager real, provider/OAuth, worker duráve
 # Controles pós-call
 
 Relatórios e transcripts respeitam tenant e ownership do seller; manager/admin/owner permanecem limitados ao tenant. O modelo recebe transcript como dado não confiável, não executa instruções encontradas nele e não escreve DealState/Memory diretamente. Logs e eventos não carregam conteúdo do transcript, output completo ou credenciais. As tabelas da Fase 9 usam RLS forçada e a role runtime continua sem superuser/bypass.
+
+# Transporte e STT live (Fase 9.6)
+
+- Captura local e processamento externo exigem consentimentos distintos e versionados. A conexão é recusada se sessão, seller owner, tenant, status, fontes ou flags não coincidirem.
+- O renderer não recebe cookie nem chave de provider. O Electron main monta o WebSocket com credenciais protegidas; a API abre o stream Gemini com segredo server-side.
+- Áudio Desktop→API usa frames binários com versão, fonte, sequência, timestamp, duração e formato. Pacotes fora de ordem/replay, malformados, grandes ou incompatíveis são rejeitados; filas e conexões por organização são limitadas.
+- Em produção o Desktop aceita somente WSS. `ws://` fica restrito ao loopback de desenvolvimento. Origem do aplicativo é allowlisted na API.
+- Conteúdo de áudio e transcript não entra em logs. Áudio cru é apenas transitório em buffers limitados. Interims não persistem e finais da Fase 9.6 não criam evento comercial ou job de IA.
+- `LOCAL_MIC` identifica apenas o vendedor autenticado; `SYSTEM_AUDIO` não recebe nomes individuais. A ausência de diarização do provider é exposta como limitação, não preenchida por inferência.
+- Antes de produção: secrets manager, egress allowlist, DPA/região/retenção do Gemini, purge/delete de transcript e derivados, quota financeira bloqueante, teste humano e soak de renovação são gates obrigatórios.

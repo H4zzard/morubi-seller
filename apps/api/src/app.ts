@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import cors from '@fastify/cors';
+import websocket from '@fastify/websocket';
 import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify';
 import { ZodError } from 'zod';
 import type { AuthUserDirectory, MorubiAuth } from '@morubi/auth';
@@ -28,7 +29,7 @@ import {
   resolveTenantContext,
   type DatabaseHandle
 } from '@morubi/db';
-import { fixtureLiveCallScript } from '@morubi/live-calls';
+import { fixtureLiveCallScript, type RealtimeTranscriptionProvider } from '@morubi/live-calls';
 import { LocalObjectStorage, type ObjectStorage } from '@morubi/storage';
 import { AppError, errors, type TenantContext } from '@morubi/domain';
 import { can, type Permission } from '@morubi/permissions';
@@ -60,6 +61,7 @@ import {
 } from './better-auth-handler.js';
 import { evaluateFixtureCorpus, exportEvaluationCsv } from '@morubi/intelligence';
 import type { SessionResolver } from './types.js';
+import { LiveAudioGateway } from './live-audio-gateway.js';
 
 export interface AppDependencies {
   database: DatabaseHandle;
@@ -68,6 +70,7 @@ export interface AppDependencies {
   authUserDirectory?: AuthUserDirectory;
   sessionResolver?: SessionResolver;
   audioStorage?: ObjectStorage;
+  realtimeTranscriptionProvider?: RealtimeTranscriptionProvider;
 }
 
 function incomingHeaders(request: FastifyRequest): Headers {
@@ -148,6 +151,12 @@ export async function buildApp(dependencies: AppDependencies): Promise<FastifyIn
       }
     }
   });
+  await app.register(websocket, {
+    options: {
+      maxPayload: env.LIVE_AUDIO_MAX_PACKET_BYTES + 32,
+      perMessageDeflate: false
+    }
+  });
   await app.register(cors, {
     origin: [env.WEB_ORIGIN, env.DESKTOP_DEV_ORIGIN],
     credentials: true,
@@ -160,14 +169,14 @@ export async function buildApp(dependencies: AppDependencies): Promise<FastifyIn
     ],
     methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS']
   });
+  const liveAudioGateway = new LiveAudioGateway(
+    database,
+    env,
+    dependencies.realtimeTranscriptionProvider ?? null
+  );
 
   if (dependencies.auth) {
-    registerBetterAuthRoutes(
-      app,
-      dependencies.auth,
-      env.BETTER_AUTH_URL,
-      trustedAuthOrigins(env)
-    );
+    registerBetterAuthRoutes(app, dependencies.auth, env.BETTER_AUTH_URL, trustedAuthOrigins(env));
   }
 
   app.get('/health', () => ({ status: 'ok', service: 'morubi-api' }));
@@ -667,6 +676,48 @@ export async function buildApp(dependencies: AppDependencies): Promise<FastifyIn
     };
   });
 
+  app.get('/v1/live-calls/transcription-capability', async (request) => {
+    const { context } = await requireTenant(request, resolver, database);
+    requirePermission(context, 'commercial.read');
+    const settings = await new LiveCallRepository(database.db, context, true).settings({
+      callCaptureEnabled: env.LIVE_CALLS_ENABLED,
+      liveTranscriptionEnabled: env.LIVE_TRANSCRIPTION_ENABLED
+    });
+    if (!env.LIVE_CALLS_ENABLED || !env.LIVE_TRANSCRIPTION_ENABLED)
+      return { enabled: false, reason: 'ENVIRONMENT_DISABLED' as const };
+    if (!settings.callCaptureEnabled || !settings.liveTranscriptionEnabled)
+      return { enabled: false, reason: 'ORGANIZATION_DISABLED' as const };
+    if (!liveAudioGateway.available())
+      return { enabled: false, reason: 'PROVIDER_UNAVAILABLE' as const };
+    return { enabled: true, reason: 'AVAILABLE' as const };
+  });
+
+  app.get<{ Params: { sessionId: string } }>(
+    '/v1/live-calls/:sessionId/audio',
+    { websocket: true },
+    (socket, request) => {
+      void (async () => {
+        try {
+          const origin = request.headers.origin;
+          if (origin !== env.DESKTOP_APP_ORIGIN && origin !== env.DESKTOP_DEV_ORIGIN) {
+            socket.close(4403, 'LIVE_AUDIO_ORIGIN_FORBIDDEN');
+            return;
+          }
+          const { context } = await requireTenant(request, resolver, database);
+          requirePermission(context, 'commercial.read');
+          await liveAudioGateway.accept(
+            socket,
+            context,
+            uuidSchema.parse(request.params.sessionId),
+            request.id
+          );
+        } catch {
+          socket.close(4401, 'LIVE_AUDIO_AUTHORIZATION_FAILED');
+        }
+      })();
+    }
+  );
+
   app.post('/v1/live-calls', async (request, reply) => {
     const { context } = await requireTenant(request, resolver, database);
     requirePermission(context, 'commercial.read');
@@ -705,8 +756,10 @@ export async function buildApp(dependencies: AppDependencies): Promise<FastifyIn
     async (request) => {
       const { context } = await requireTenant(request, resolver, database);
       requirePermission(context, 'commercial.read');
-      if (!env.LIVE_CALLS_ENABLED || !env.LIVE_TRANSCRIPTION_ENABLED) throw errors.notFound();
+      if (!env.LIVE_CALLS_ENABLED) throw errors.notFound();
       const input = startLiveCallSchema.parse(request.body);
+      if (input.transcriptionMode === 'REALTIME' && !liveAudioGateway.available())
+        throw errors.conflict('A transcrição em tempo real não está configurada neste ambiente.');
       return new LiveCallRepository(database.db, context, true).start(
         uuidSchema.parse(request.params.sessionId),
         input
@@ -720,10 +773,23 @@ export async function buildApp(dependencies: AppDependencies): Promise<FastifyIn
       const { context } = await requireTenant(request, resolver, database);
       requirePermission(context, 'commercial.read');
       if (!env.LIVE_CALLS_ENABLED) throw errors.notFound();
-      return new LiveCallRepository(database.db, context, true).heartbeat(
-        uuidSchema.parse(request.params.sessionId),
-        liveCallHeartbeatSchema.parse(request.body)
+      const sessionId = uuidSchema.parse(request.params.sessionId);
+      const heartbeat = liveCallHeartbeatSchema.parse(request.body);
+      request.log.debug(
+        {
+          liveCallSessionId: sessionId,
+          capture: {
+            bufferedBytes: heartbeat.bufferedBytes,
+            droppedChunks: heartbeat.droppedChunks,
+            capturedChunks: heartbeat.capturedChunks,
+            sourceFailures: heartbeat.sourceFailures,
+            reconnects: heartbeat.reconnects,
+            sources: heartbeat.sources
+          }
+        },
+        'live call capture heartbeat'
       );
+      return new LiveCallRepository(database.db, context, true).heartbeat(sessionId, heartbeat);
     }
   );
 

@@ -1,9 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { eq, inArray } from 'drizzle-orm';
+import { and, count, eq, inArray } from 'drizzle-orm';
 import { FixtureGenerativeProvider } from '@morubi/ai';
 import {
   commercialEvents,
+  callConsentRecords,
+  callUsage,
+  aiUsage,
   CopilotRepository,
   contacts,
   conversations,
@@ -13,9 +16,12 @@ import {
   intelligenceSettings,
   IntelligenceProcessor,
   interventionTemplates,
+  liveCallSessions,
   LiveCallRepository,
   memberships,
   organizations,
+  generationJobs,
+  postCallJobs as postCallJobsTable,
   PostCallJobRepository,
   PostCallProcessor,
   PostCallReadRepository,
@@ -269,6 +275,71 @@ describe('live calls integration and tenant invariants', () => {
       status: 'PROCESSING',
       priority: 10
     });
+    const [generationCountBefore] = await admin.db
+      .select({ value: count() })
+      .from(generationJobs)
+      .where(eq(generationJobs.organizationId, organizationAId));
+    const failingPostCallProcessor = new PostCallProcessor(
+      runtime.db,
+      contextA,
+      new FixtureGenerativeProvider('FAILURE'),
+      {
+        enabled: true,
+        maxSegmentCharacters: 1_000,
+        maxOutputCharacters: 16_000,
+        pricing: { inputMicrosPerMillionTokens: 0n, outputMicrosPerMillionTokens: 0n }
+      }
+    );
+    const postCallError = await failingPostCallProcessor.process(postCallJob!).then(
+      () => null,
+      (error: unknown) => error
+    );
+    expect(postCallError).toBeInstanceOf(Error);
+    await failingPostCallProcessor.recordFailure(postCallJob!, postCallError, 25);
+    expect(await postCallJobs.fail(postCallJob!, postCallError)).toEqual({
+      terminal: false,
+      errorCode: 'FIXTURE_500'
+    });
+    const [failedPostCallJob] = await admin.db
+      .select()
+      .from(postCallJobsTable)
+      .where(eq(postCallJobsTable.id, postCallJob!.id));
+    expect(failedPostCallJob).toMatchObject({
+      status: 'RETRY',
+      attempts: 1,
+      errorCode: 'FIXTURE_500'
+    });
+    const [failureUsage] = await admin.db
+      .select()
+      .from(aiUsage)
+      .where(
+        and(
+          eq(aiUsage.liveCallSessionId, session.id),
+          eq(aiUsage.purpose, 'POST_CALL_ANALYSIS'),
+          eq(aiUsage.success, false)
+        )
+      );
+    expect(failureUsage).toMatchObject({
+      purpose: 'POST_CALL_ANALYSIS',
+      success: false,
+      retryCount: 0,
+      errorCode: 'FIXTURE_500'
+    });
+    const [generationCountAfter] = await admin.db
+      .select({ value: count() })
+      .from(generationJobs)
+      .where(eq(generationJobs.organizationId, organizationAId));
+    expect(generationCountAfter!.value).toBe(generationCountBefore!.value);
+    await admin.db
+      .update(postCallJobsTable)
+      .set({ availableAt: new Date(0) })
+      .where(eq(postCallJobsTable.id, postCallJob!.id));
+    const recoveredPostCallJob = await postCallJobs.claimNext();
+    expect(recoveredPostCallJob).toMatchObject({
+      id: postCallJob!.id,
+      status: 'PROCESSING',
+      attempts: 2
+    });
     const postCallProcessor = new PostCallProcessor(
       runtime.db,
       contextA,
@@ -280,9 +351,20 @@ describe('live calls integration and tenant invariants', () => {
         pricing: { inputMicrosPerMillionTokens: 0n, outputMicrosPerMillionTokens: 0n }
       }
     );
-    const generated = await postCallProcessor.process(postCallJob!);
-    await postCallJobs.complete(postCallJob!.id);
+    const generated = await postCallProcessor.process(recoveredPostCallJob!);
+    await postCallJobs.complete(recoveredPostCallJob!.id);
     expect(generated).toMatchObject({ version: 1, deduplicated: false });
+    const successfulUsage = await admin.db
+      .select()
+      .from(aiUsage)
+      .where(
+        and(
+          eq(aiUsage.liveCallSessionId, session.id),
+          eq(aiUsage.purpose, 'POST_CALL_ANALYSIS'),
+          eq(aiUsage.success, true)
+        )
+      );
+    expect(successfulUsage).toContainEqual(expect.objectContaining({ retryCount: 1 }));
     const postCallReads = new PostCallReadRepository(runtime.db, contextA);
     const report = await postCallReads.getReport(session.id);
     expect(report).toMatchObject({ status: 'READY' });
@@ -293,11 +375,35 @@ describe('live calls integration and tenant invariants', () => {
     expect(await new PostCallReadRepository(runtime.db, contextB).getReport(session.id)).toBeNull();
     const retrying = await postCallReads.retry(session.id, 'post-call-reprocess');
     expect(retrying.status).toBe('PROCESSING');
-    const retryJob = await postCallJobs.claimNext();
-    const reprocessed = await postCallProcessor.process(retryJob!);
-    await postCallJobs.complete(retryJob!.id);
+    const reprocessJob = await postCallJobs.claimNext();
+    const reprocessed = await postCallProcessor.process(reprocessJob!);
+    await postCallJobs.complete(reprocessJob!.id);
     expect(reprocessed).toMatchObject({ version: 2, deduplicated: false });
     expect((await postCallReads.getReport(session.id))?.currentRevision?.version).toBe(2);
+    await postCallReads.retry(session.id, 'post-call-terminal-failure');
+    await admin.db
+      .update(postCallJobsTable)
+      .set({ maxAttempts: 1 })
+      .where(eq(postCallJobsTable.id, postCallJob!.id));
+    const terminalJob = await postCallJobs.claimNext();
+    const terminalError = await failingPostCallProcessor.process(terminalJob!).then(
+      () => null,
+      (error: unknown) => error
+    );
+    await failingPostCallProcessor.recordFailure(terminalJob!, terminalError, 25);
+    expect(await postCallJobs.fail(terminalJob!, terminalError)).toEqual({
+      terminal: true,
+      errorCode: 'FIXTURE_500'
+    });
+    const [terminalState] = await admin.db
+      .select()
+      .from(postCallJobsTable)
+      .where(eq(postCallJobsTable.id, terminalJob!.id));
+    expect(terminalState).toMatchObject({ status: 'FAILED', errorCode: 'FIXTURE_500' });
+    expect(await postCallReads.getReport(session.id)).toMatchObject({
+      status: 'FAILED',
+      failureCode: 'FIXTURE_500'
+    });
     await expect(
       repository.acceptTurn(
         session.id,
@@ -305,6 +411,257 @@ describe('live calls integration and tenant invariants', () => {
         'live-after-end'
       )
     ).rejects.toThrow('LIVE_SESSION_NOT_ACTIVE');
+  });
+
+  it('starts capture-only with explicit dual-source consent while live STT is disabled', async () => {
+    const repository = new LiveCallRepository(runtime.db, contextA, true);
+    await repository.updateSettings({
+      callCaptureEnabled: true,
+      meetDetectionEnabled: true,
+      zoomDetectionEnabled: false,
+      liveTranscriptionEnabled: false,
+      liveCopilotEnabled: false,
+      liveGenerationEnabled: false,
+      autoStartEnabled: false,
+      rawAudioRetentionDays: 0,
+      transcriptRetentionDays: 90,
+      maxBufferBytes: 4_194_304,
+      turnAggregationGapMs: 1_200,
+      liveCardTtlSeconds: 20
+    });
+    const dismissed = await repository.create({
+      meetingProvider: 'MEET',
+      meetingTitle: 'Meet - dismissed',
+      detectionConfidence: 0.68,
+      detectionEvidence: 'WINDOW_TITLE'
+    });
+    await expect(repository.end(dismissed.id, 'dismissed', false)).resolves.toMatchObject({
+      status: 'CANCELLED'
+    });
+
+    const session = await repository.create({
+      meetingProvider: 'MEET',
+      meetingTitle: 'Meet - capture-only',
+      detectionConfidence: 0.68,
+      detectionEvidence: 'WINDOW_TITLE'
+    });
+    await expect(
+      repository.start(session.id, {
+        consentMode: 'MANUAL_CONFIRMATION',
+        policyVersion: 'live-capture-consent-v2',
+        captureMode: 'MIXED',
+        transcriptionMode: 'DISABLED',
+        captureSources: ['LOCAL_MIC', 'SYSTEM_AUDIO']
+      })
+    ).resolves.toMatchObject({
+      status: 'ACTIVE',
+      captureMode: 'MIXED',
+      transcriptionMode: 'DISABLED'
+    });
+    const detail = await repository.get(session.id);
+    expect(detail).toMatchObject({
+      consent: {
+        mode: 'MANUAL_CONFIRMATION',
+        policyVersion: 'live-capture-consent-v2',
+        captureSources: ['LOCAL_MIC', 'SYSTEM_AUDIO']
+      },
+      turns: []
+    });
+    await repository.end(session.id, 'capture-only', false);
+  });
+
+  it('requires distinct realtime consent and persists final text without triggering intelligence', async () => {
+    const repository = new LiveCallRepository(runtime.db, contextA, true);
+    await repository.updateSettings({
+      callCaptureEnabled: true,
+      meetDetectionEnabled: false,
+      zoomDetectionEnabled: false,
+      liveTranscriptionEnabled: true,
+      liveCopilotEnabled: false,
+      liveGenerationEnabled: false,
+      autoStartEnabled: false,
+      rawAudioRetentionDays: 0,
+      transcriptRetentionDays: 90,
+      maxBufferBytes: 65_536,
+      turnAggregationGapMs: 1_200,
+      liveCardTtlSeconds: 20
+    });
+    const invalid = await repository.create({
+      meetingProvider: 'MEET',
+      meetingTitle: 'Realtime consent invalid',
+      detectionConfidence: 1,
+      detectionEvidence: 'MANUAL'
+    });
+    await expect(
+      repository.start(invalid.id, {
+        consentMode: 'MANUAL_CONFIRMATION',
+        policyVersion: 'live-capture-consent-v2',
+        captureMode: 'MIXED',
+        transcriptionMode: 'REALTIME',
+        captureSources: ['LOCAL_MIC', 'SYSTEM_AUDIO']
+      })
+    ).rejects.toThrow('LIVE_TRANSCRIPTION_CONSENT_VERSION_INVALID');
+    await repository.end(invalid.id, 'invalid-realtime-consent', false);
+
+    const session = await repository.create({
+      meetingProvider: 'MEET',
+      meetingTitle: 'Realtime consent valid',
+      detectionConfidence: 1,
+      detectionEvidence: 'MANUAL'
+    });
+    await repository.start(session.id, {
+      consentMode: 'MANUAL_CONFIRMATION',
+      policyVersion: 'live-transcription-consent-v1',
+      captureMode: 'MIXED',
+      transcriptionMode: 'REALTIME',
+      captureSources: ['LOCAL_MIC', 'SYSTEM_AUDIO']
+    });
+    const result = await repository.acceptTurn(
+      session.id,
+      {
+        clientTurnId: `${session.id}:LOCAL_MIC:0`,
+        speakerRole: 'SELLER',
+        speakerOrigin: 'LOCAL_MIC',
+        speakerConfidence: 1,
+        text: 'Bom dia, podemos começar.',
+        isPartial: false,
+        isFinal: true,
+        startedAt: new Date(),
+        endedAt: new Date(Date.now() + 1_000),
+        confidence: null,
+        provider: 'gemini-live',
+        model: 'gemini-3.5-transcribe-live',
+        sequence: 0,
+        audioProcessedMs: 0,
+        estimatedCostMicros: 0n
+      },
+      'realtime-final-no-intelligence',
+      { emitCommercialEvent: false }
+    );
+    expect(result).toMatchObject({ commercialEventId: null, intelligenceJobId: null });
+    await repository.recordTranscriptionUsage(session.id, {
+      provider: 'gemini-live',
+      model: 'gemini-3.5-transcribe-live',
+      audioProcessedSeconds: 1,
+      estimatedCostMicros: 150n,
+      inputTokens: 25,
+      outputTokens: 4,
+      usageMeasurement: 'ACTUAL'
+    });
+    expect(await repository.get(session.id)).toMatchObject({
+      consent: { transcriptionAuthorized: true },
+      turns: [expect.objectContaining({ text: 'Bom dia, podemos começar.', isFinal: true })],
+      metrics: {
+        audioProcessedSeconds: 1,
+        transcriptionInputTokens: 25,
+        transcriptionOutputTokens: 4,
+        usageMeasurement: 'ACTUAL',
+        costTotalMicros: '150'
+      }
+    });
+    expect(await new LiveCallRepository(runtime.db, contextB, true).get(session.id)).toBeNull();
+    await repository.end(session.id, 'realtime-end', false);
+  });
+
+  it('starts a manual call when automatic meeting detectors are disabled', async () => {
+    const repository = new LiveCallRepository(runtime.db, contextA, true);
+    await repository.updateSettings({
+      callCaptureEnabled: true,
+      meetDetectionEnabled: false,
+      zoomDetectionEnabled: false,
+      liveTranscriptionEnabled: false,
+      liveCopilotEnabled: false,
+      liveGenerationEnabled: false,
+      autoStartEnabled: false,
+      rawAudioRetentionDays: 0,
+      transcriptRetentionDays: 90,
+      maxBufferBytes: 4_194_304,
+      turnAggregationGapMs: 1_200,
+      liveCardTtlSeconds: 20
+    });
+    const manual = await repository.create({
+      meetingProvider: 'MEET',
+      meetingTitle: 'Google Meet',
+      detectionConfidence: 1,
+      detectionEvidence: 'MANUAL'
+    });
+
+    await expect(
+      repository.start(manual.id, {
+        consentMode: 'MANUAL_CONFIRMATION',
+        policyVersion: 'live-capture-consent-v2',
+        captureMode: 'MIXED',
+        transcriptionMode: 'DISABLED',
+        captureSources: ['LOCAL_MIC', 'SYSTEM_AUDIO']
+      })
+    ).resolves.toMatchObject({ status: 'ACTIVE', detectionEvidence: 'MANUAL' });
+    await repository.end(manual.id, 'manual-capture-only', false);
+
+    const automaticallyDetected = await repository.create({
+      meetingProvider: 'MEET',
+      meetingTitle: 'Google Meet detected in browser',
+      detectionConfidence: 0.68,
+      detectionEvidence: 'WINDOW_TITLE'
+    });
+    await expect(
+      repository.start(automaticallyDetected.id, {
+        consentMode: 'MANUAL_CONFIRMATION',
+        policyVersion: 'live-capture-consent-v2',
+        captureMode: 'MIXED',
+        transcriptionMode: 'DISABLED',
+        captureSources: ['LOCAL_MIC', 'SYSTEM_AUDIO']
+      })
+    ).rejects.toThrow('MEET_DETECTION_DISABLED');
+  });
+
+  it('rejects an unconfigured tenant without persisting consent or usage', async () => {
+    const repository = new LiveCallRepository(runtime.db, contextB, true);
+    const manual = await repository.create({
+      meetingProvider: 'MEET',
+      meetingTitle: 'Google Meet',
+      detectionConfidence: 1,
+      detectionEvidence: 'MANUAL'
+    });
+
+    await expect(
+      repository.start(manual.id, {
+        consentMode: 'MANUAL_CONFIRMATION',
+        policyVersion: 'live-capture-consent-v2',
+        captureMode: 'MIXED',
+        transcriptionMode: 'DISABLED',
+        captureSources: ['LOCAL_MIC', 'SYSTEM_AUDIO']
+      })
+    ).rejects.toMatchObject({
+      code: 'CONFLICT',
+      statusCode: 409,
+      message: 'A captura de calls não está habilitada para esta organização.'
+    });
+
+    const detail = await repository.get(manual.id);
+    expect(detail).toMatchObject({
+      status: 'DETECTED',
+      consent: null,
+      metrics: {
+        callDurationSeconds: 0,
+        audioProcessedSeconds: 0,
+        decisionCount: 0,
+        generationCount: 0,
+        cardsDelivered: 0,
+        droppedChunks: 0,
+        costTotalMicros: '0'
+      }
+    });
+    const [persisted] = await admin.db
+      .select({
+        consents: count(callConsentRecords.id),
+        usageRows: count(callUsage.id)
+      })
+      .from(liveCallSessions)
+      .leftJoin(callConsentRecords, eq(callConsentRecords.liveCallSessionId, liveCallSessions.id))
+      .leftJoin(callUsage, eq(callUsage.liveCallSessionId, liveCallSessions.id))
+      .where(eq(liveCallSessions.id, manual.id));
+    expect(persisted).toEqual({ consents: 0, usageRows: 0 });
+    await repository.end(manual.id, 'unconfigured-tenant', false);
   });
 
   it('enables and forces RLS on every live-call table', async () => {

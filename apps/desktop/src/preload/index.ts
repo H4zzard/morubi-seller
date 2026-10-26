@@ -8,6 +8,10 @@ const bridge: MorubiBridge = {
     getPlatform: () =>
       ipcRenderer.invoke(ipcChannels.systemGetPlatform) as ReturnType<
         MorubiBridge['system']['getPlatform']
+      >,
+    getOSVersion: () =>
+      ipcRenderer.invoke(ipcChannels.systemGetOSVersion) as ReturnType<
+        MorubiBridge['system']['getOSVersion']
       >
   },
   auth: {
@@ -145,14 +149,107 @@ const bridge: MorubiBridge = {
       ipcRenderer.invoke(ipcChannels.liveCallsSimulate, input) as ReturnType<
         MorubiBridge['liveCalls']['simulate']
       >,
-    authorizeMicrophone: () =>
-      ipcRenderer.invoke(ipcChannels.liveCallsAuthorizeMicrophone) as ReturnType<
+    getRuntimeCapabilities: () =>
+      ipcRenderer.invoke(ipcChannels.liveCallsGetRuntimeCapabilities) as ReturnType<
+        MorubiBridge['liveCalls']['getRuntimeCapabilities']
+      >,
+    requestMeetingObservationPermission: () =>
+      ipcRenderer.invoke(ipcChannels.liveCallsRequestMeetingObservationPermission) as ReturnType<
+        MorubiBridge['liveCalls']['requestMeetingObservationPermission']
+      >,
+    observeMeetings: () =>
+      ipcRenderer.invoke(ipcChannels.liveCallsObserveMeetings) as ReturnType<
+        MorubiBridge['liveCalls']['observeMeetings']
+      >,
+    listSystemAudioSources: () =>
+      ipcRenderer.invoke(ipcChannels.liveCallsListSystemAudioSources) as ReturnType<
+        MorubiBridge['liveCalls']['listSystemAudioSources']
+      >,
+    authorizeMicrophone: (sessionId) =>
+      ipcRenderer.invoke(ipcChannels.liveCallsAuthorizeMicrophone, sessionId) as ReturnType<
         MorubiBridge['liveCalls']['authorizeMicrophone']
+      >,
+    authorizeAudioDiagnostic: () =>
+      ipcRenderer.invoke(ipcChannels.liveCallsAuthorizeAudioDiagnostic) as ReturnType<
+        MorubiBridge['liveCalls']['authorizeAudioDiagnostic']
+      >,
+    authorizeSystemAudioDiagnostic: (sourceId) =>
+      ipcRenderer.invoke(
+        ipcChannels.liveCallsAuthorizeSystemAudioDiagnostic,
+        sourceId
+      ) as ReturnType<MorubiBridge['liveCalls']['authorizeSystemAudioDiagnostic']>,
+    authorizeMacOSSystemAudio: (sessionId) =>
+      ipcRenderer.invoke(ipcChannels.liveCallsAuthorizeMacOSSystemAudio, sessionId) as ReturnType<
+        MorubiBridge['liveCalls']['authorizeMacOSSystemAudio']
+      >,
+    authorizeSystemAudio: (input) =>
+      ipcRenderer.invoke(ipcChannels.liveCallsAuthorizeSystemAudio, input) as ReturnType<
+        MorubiBridge['liveCalls']['authorizeSystemAudio']
+      >,
+    startNativeSystemAudio: (sessionId) =>
+      ipcRenderer.invoke(ipcChannels.liveCallsStartNativeSystemAudio, sessionId) as ReturnType<
+        MorubiBridge['liveCalls']['startNativeSystemAudio']
+      >,
+    stopNativeSystemAudio: (sessionId) =>
+      ipcRenderer.invoke(ipcChannels.liveCallsStopNativeSystemAudio, sessionId) as ReturnType<
+        MorubiBridge['liveCalls']['stopNativeSystemAudio']
+      >,
+    onNativeSystemAudioChunk: (listener) => {
+      const wrapped = (_event: Electron.IpcRendererEvent, chunk: Parameters<typeof listener>[0]) =>
+        listener(chunk);
+      ipcRenderer.on(ipcChannels.liveCallsNativeSystemAudioChunk, wrapped);
+      return () => ipcRenderer.removeListener(ipcChannels.liveCallsNativeSystemAudioChunk, wrapped);
+    },
+    onNativeSystemAudioFailure: (listener) => {
+      const wrapped = (
+        _event: Electron.IpcRendererEvent,
+        failure: Parameters<typeof listener>[0]
+      ) => listener(failure);
+      ipcRenderer.on(ipcChannels.liveCallsNativeSystemAudioFailure, wrapped);
+      return () =>
+        ipcRenderer.removeListener(ipcChannels.liveCallsNativeSystemAudioFailure, wrapped);
+    },
+    onCaptureStopRequested: (listener) => {
+      const wrapped = () => listener();
+      ipcRenderer.on(ipcChannels.liveCallsCaptureStopRequested, wrapped);
+      return () => ipcRenderer.removeListener(ipcChannels.liveCallsCaptureStopRequested, wrapped);
+    },
+    setBackgroundObservation: (enabled) =>
+      ipcRenderer.invoke(ipcChannels.liveCallsSetBackgroundObservation, enabled) as ReturnType<
+        MorubiBridge['liveCalls']['setBackgroundObservation']
       >,
     setCompactMode: (input) =>
       ipcRenderer.invoke(ipcChannels.liveCallsSetCompactMode, input) as ReturnType<
         MorubiBridge['liveCalls']['setCompactMode']
-      >
+      >,
+    getTranscriptionCapability: () =>
+      ipcRenderer.invoke(ipcChannels.liveCallsGetTranscriptionCapability) as ReturnType<
+        MorubiBridge['liveCalls']['getTranscriptionCapability']
+      >,
+    startTranscription: (sessionId) =>
+      ipcRenderer.invoke(ipcChannels.liveCallsStartTranscription, sessionId) as ReturnType<
+        MorubiBridge['liveCalls']['startTranscription']
+      >,
+    sendAudioChunk: (chunk) =>
+      ipcRenderer.invoke(ipcChannels.liveCallsSendAudioChunk, chunk) as ReturnType<
+        MorubiBridge['liveCalls']['sendAudioChunk']
+      >,
+    stopTranscription: () =>
+      ipcRenderer.invoke(ipcChannels.liveCallsStopTranscription) as ReturnType<
+        MorubiBridge['liveCalls']['stopTranscription']
+      >,
+    onTranscriptTurn: (listener) => {
+      const wrapped = (_event: Electron.IpcRendererEvent, turn: Parameters<typeof listener>[0]) =>
+        listener(turn);
+      ipcRenderer.on(ipcChannels.liveCallsTranscriptTurn, wrapped);
+      return () => ipcRenderer.removeListener(ipcChannels.liveCallsTranscriptTurn, wrapped);
+    },
+    onTranscriptionStatus: (listener) => {
+      const wrapped = (_event: Electron.IpcRendererEvent, status: Parameters<typeof listener>[0]) =>
+        listener(status);
+      ipcRenderer.on(ipcChannels.liveCallsTranscriptionStatus, wrapped);
+      return () => ipcRenderer.removeListener(ipcChannels.liveCallsTranscriptionStatus, wrapped);
+    }
   },
   notifications: {
     show: (input) =>

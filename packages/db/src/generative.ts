@@ -22,12 +22,16 @@ import {
   intelligenceSettings,
   interventionCandidates,
   interventionTemplates,
-  memoryFacts,
-  organizations
+  memoryFacts
 } from './schema.js';
 import { setTenantContext } from './tenant.js';
+import {
+  jobFailureIsTerminal,
+  sanitizeJobErrorCode,
+  type JobFailureOutcome
+} from './job-failure.js';
 
-type GenerationJob = typeof generationJobs.$inferSelect;
+export type GenerationJob = typeof generationJobs.$inferSelect;
 
 export interface GenerativeProcessorConfig {
   generativeAiEnabled: boolean;
@@ -43,8 +47,9 @@ export interface GenerativeProcessResult {
   reason: string;
 }
 
-export interface WorkerQueueSnapshot {
+export interface WorkerQueueSnapshot extends Record<string, unknown> {
   organizationId: string;
+  staleLiveSessions: number;
   transcriptionPending: number;
   audioRetentionPending: number;
   transcriptRetentionPending: number;
@@ -64,56 +69,19 @@ export function workerTenantContext(organizationId: string): TenantContext {
 }
 
 export async function listWorkerQueues(db: MorubiDatabase): Promise<WorkerQueueSnapshot[]> {
-  const rows = await db
-    .select({
-      organizationId: organizations.id,
-      transcriptionPending: sql<number>`(
-        select count(*)::int from transcription_jobs j
-        where j.organization_id = ${organizations.id}
-          and (j.status in ('PENDING', 'RETRY') or (j.status = 'PROCESSING' and j.locked_at < now() - interval '5 minutes'))
-          and j.available_at <= now()
-      )`,
-      audioRetentionPending: sql<number>`(
-        select count(*)::int from audio_assets a
-        where a.organization_id = ${organizations.id}
-          and a.retention_until < now()
-          and a.status in ('READY', 'TRANSCRIBED', 'FAILED')
-      )`,
-      transcriptRetentionPending: sql<number>`(
-        select count(*)::int from audio_transcripts t
-        left join intelligence_settings s on s.organization_id = t.organization_id
-        where t.organization_id = ${organizations.id}
-          and t.created_at < now() - make_interval(days => coalesce(s.transcript_retention_days, 90))
-      )`,
-      intelligencePending: sql<number>`(
-        select count(*)::int from intelligence_jobs j
-        where j.organization_id = ${organizations.id}
-          and (j.status = 'PENDING' or (j.status = 'RUNNING' and j.locked_at < now() - interval '5 minutes'))
-          and j.available_at <= now()
-      )`,
-      generationPending: sql<number>`(
-        select count(*)::int from generation_jobs j
-        where j.organization_id = ${organizations.id}
-          and (j.status = 'PENDING' or (j.status = 'RUNNING' and j.locked_at < now() - interval '5 minutes'))
-          and j.available_at <= now()
-      )`,
-      postCallPending: sql<number>`(
-        select count(*)::int from post_call_jobs j
-        where j.organization_id = ${organizations.id}
-          and (j.status in ('PENDING', 'RETRY') or (j.status = 'PROCESSING' and j.locked_at < now() - interval '10 minutes'))
-          and j.available_at <= now()
-      )`
-    })
-    .from(organizations);
-  return rows.filter(
-    (row) =>
-      row.audioRetentionPending > 0 ||
-      row.transcriptRetentionPending > 0 ||
-      row.transcriptionPending > 0 ||
-      row.intelligencePending > 0 ||
-      row.generationPending > 0 ||
-      row.postCallPending > 0
-  );
+  const result = await db.execute<WorkerQueueSnapshot>(sql`
+    select
+      organization_id as "organizationId",
+      stale_live_sessions as "staleLiveSessions",
+      transcription_pending as "transcriptionPending",
+      audio_retention_pending as "audioRetentionPending",
+      transcript_retention_pending as "transcriptRetentionPending",
+      intelligence_pending as "intelligencePending",
+      generation_pending as "generationPending",
+      post_call_pending as "postCallPending"
+    from public.morubi_worker_queue_snapshot()
+  `);
+  return result.rows;
 }
 
 export class GenerationJobRepository {
@@ -161,14 +129,15 @@ export class GenerationJobRepository {
     });
   }
 
-  public async fail(job: GenerationJob, error: unknown): Promise<void> {
-    const terminal = job.attempts >= job.maxAttempts;
+  public async fail(job: GenerationJob, error: unknown): Promise<JobFailureOutcome> {
+    const terminal = jobFailureIsTerminal(job, error);
+    const errorCode = sanitizeJobErrorCode(error);
     await this.finish(job.id, {
       status: terminal ? 'FAILED' : 'PENDING',
       availableAt: new Date(Date.now() + Math.min(30_000, 1_000 * 2 ** job.attempts)),
       finishedAt: terminal ? new Date() : null,
       lockedAt: null,
-      errorCode: error instanceof Error ? error.message.slice(0, 80) : 'UNKNOWN'
+      errorCode
     });
     if (terminal) {
       await this.db.transaction(async (tx) => {
@@ -185,6 +154,7 @@ export class GenerationJobRepository {
           );
       });
     }
+    return { terminal, errorCode };
   }
 
   private async finish(
@@ -310,7 +280,7 @@ export class GenerativeProcessor {
         : result.validation.result === 'VALID'
           ? 'GENERATED'
           : `VALIDATION_${result.validation.result}`;
-      await this.commitExecution(executionId, loaded, result, eligible, reason);
+      await this.commitExecution(executionId, loaded, job, result, eligible, reason);
       return {
         decisionId: loaded.decision.id,
         executionId,
@@ -583,6 +553,7 @@ export class GenerativeProcessor {
   private async commitExecution(
     executionId: string,
     loaded: NonNullable<Awaited<ReturnType<GenerativeProcessor['load']>>>,
+    job: GenerationJob,
     result: Awaited<ReturnType<GenerationEngine['run']>>,
     eligible: boolean,
     reason: string
@@ -607,7 +578,7 @@ export class GenerativeProcessor {
           output: result.output,
           validationResult: result.validation.result,
           validationErrors: result.validation.errors,
-          attemptCount: result.attempts,
+          attemptCount: Math.max(job.attempts, result.attempts),
           inputTokens: result.inputTokens,
           outputTokens: result.outputTokens,
           estimatedCostMicros: result.estimatedCostMicros,
@@ -668,7 +639,7 @@ export class GenerativeProcessor {
           profile: result.profile,
           purpose: 'GENERATION',
           success: eligible,
-          retryCount: Math.max(0, result.attempts - 1),
+          retryCount: Math.max(0, job.attempts - 1, result.attempts - 1),
           inputSize: JSON.stringify(loaded.decision.output).length,
           outputSize: result.output ? JSON.stringify(result.output).length : 0,
           inputTokens: result.inputTokens,
@@ -681,7 +652,7 @@ export class GenerativeProcessor {
           target: [aiUsage.organizationId, aiUsage.generativeExecutionId],
           set: {
             success: eligible,
-            retryCount: Math.max(0, result.attempts - 1),
+            retryCount: Math.max(0, job.attempts - 1, result.attempts - 1),
             inputTokens: result.inputTokens,
             outputTokens: result.outputTokens,
             latencyMs: result.generationLatencyMs,
@@ -699,7 +670,7 @@ export class GenerativeProcessor {
     error: unknown,
     stale: boolean
   ): Promise<void> {
-    const code = error instanceof Error ? error.message.slice(0, 80) : 'UNKNOWN';
+    const code = sanitizeJobErrorCode(error);
     await this.db.transaction(async (tx) => {
       await setTenantContext(tx, this.context);
       await tx

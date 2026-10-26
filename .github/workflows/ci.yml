@@ -25,8 +25,12 @@ jobs:
     env:
       DATABASE_ADMIN_URL: postgresql://postgres:postgres@localhost:5432/morubi
       DATABASE_URL: postgresql://morubi_app:morubi_app@localhost:5432/morubi
+      AUTH_DATABASE_URL: postgresql://morubi_auth:morubi_auth@localhost:5432/morubi
+      WORKER_COORDINATOR_DATABASE_URL: postgresql://morubi_worker:morubi_worker@localhost:5432/morubi
       TEST_DATABASE_ADMIN_URL: postgresql://postgres:postgres@localhost:5432/morubi
       TEST_DATABASE_URL: postgresql://morubi_app:morubi_app@localhost:5432/morubi
+      TEST_AUTH_DATABASE_URL: postgresql://morubi_auth:morubi_auth@localhost:5432/morubi
+      TEST_WORKER_COORDINATOR_DATABASE_URL: postgresql://morubi_worker:morubi_worker@localhost:5432/morubi
       BETTER_AUTH_SECRET: ci-secret-with-at-least-thirty-two-characters
       BETTER_AUTH_URL: http://localhost:4000
       WEB_ORIGIN: http://localhost:3000
@@ -49,6 +53,7 @@ jobs:
           PGPASSWORD: postgres
         run: psql -h localhost -U postgres -d morubi -f packages/db/docker/init/001_roles.sql
       - run: pnpm db:migrate
+      - run: pnpm db:audit
       - run: pnpm lint
       - run: pnpm typecheck
       - run: pnpm test

@@ -15,7 +15,7 @@ interface RuntimeRole {
 
 async function validateRuntimeRole(
   connectionUrl: string,
-  expectedRole: 'morubi_app' | 'morubi_auth'
+  expectedRole: 'morubi_app' | 'morubi_auth' | 'morubi_worker'
 ): Promise<RuntimeRole> {
   const runtime = createDatabase(connectionUrl);
   try {
@@ -68,9 +68,10 @@ async function applyMigrations(adminUrl: string): Promise<void> {
 
 export default async function globalSetup(): Promise<void> {
   loadApiTestEnvironment();
-  const { adminUrl, runtimeUrl, authUrl } = getTestDatabaseEnvironment();
+  const { adminUrl, runtimeUrl, authUrl, workerCoordinatorUrl } = getTestDatabaseEnvironment();
   const runtimeRole = await validateRuntimeRole(runtimeUrl, 'morubi_app');
   const authRole = await validateRuntimeRole(authUrl, 'morubi_auth');
+  const workerRole = await validateRuntimeRole(workerCoordinatorUrl, 'morubi_worker');
 
   console.info(
     `[integration] runtime role verified: current_user=${runtimeRole.currentUser}, ` +
@@ -79,6 +80,10 @@ export default async function globalSetup(): Promise<void> {
   console.info(
     `[integration] auth role verified: current_user=${authRole.currentUser}, ` +
       `rolsuper=${authRole.rolsuper}, rolbypassrls=${authRole.rolbypassrls}`
+  );
+  console.info(
+    `[integration] worker coordinator role verified: current_user=${workerRole.currentUser}, ` +
+      `rolsuper=${workerRole.rolsuper}, rolbypassrls=${workerRole.rolbypassrls}`
   );
 
   await applyMigrations(adminUrl);

@@ -85,6 +85,27 @@
       "when": 1791490000000,
       "tag": "0011_post_call_canonical",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1791576400000,
+      "tag": "0012_worker_coordinator",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1792630800000,
+      "tag": "0013_capture_without_stt",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1792724400000,
+      "tag": "0014_live_transcription_usage",
+      "breakpoints": true
     }
   ]
 }
